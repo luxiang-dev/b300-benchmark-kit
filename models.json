@@ -1,0 +1,5 @@
+[
+  {"name":"Qwen3-0.6B","repo":"Qwen/Qwen3-0.6B","kind":"llm","include":["*.json","*.safetensors","*.txt","LICENSE*","README.md"],"purpose":"8 卡独立推理冒烟测试"},
+  {"name":"Qwen3-8B","repo":"Qwen/Qwen3-8B","kind":"llm","include":["*.json","*.safetensors","*.txt","LICENSE*","README.md"],"purpose":"8 卡独立推理吞吐测试"},
+  {"name":"SDXL-base-1.0","repo":"stabilityai/stable-diffusion-xl-base-1.0","kind":"image","include":["model_index.json","LICENSE*","README.md","scheduler/*.json","tokenizer/*","tokenizer_2/*","text_encoder/config.json","text_encoder/model.fp16.safetensors","text_encoder_2/config.json","text_encoder_2/model.fp16.safetensors","unet/config.json","unet/diffusion_pytorch_model.fp16.safetensors","vae/config.json","vae/diffusion_pytorch_model.fp16.safetensors"],"purpose":"1024×1024 图像生成测试"}
+]

@@ -1,0 +1,18 @@
+{
+  "synthetic_only": true,
+  "report": {
+    "missing_telemetry": "PASS",
+    "one_of_eight_gpus_telemetry": "PASS"
+  },
+  "responses": {
+    "one_byte_instead_of_int32_responses_accepted": true
+  },
+  "dataset": {
+    "nan_float64_inputs_4388_by_1_and_negative_lengths_accepted": true,
+    "note": "External assets, Git and GPU conditions mocked; actual dataset validation executed."
+  },
+  "configuration": {
+    "unchecked_config_dir_inherited_by_server": "/synthetic/external-configs",
+    "command_pins_config_dir": false
+  }
+}

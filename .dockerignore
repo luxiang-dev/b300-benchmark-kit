@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!requirements.txt
+!image_constraints.py
+!build_nccl_tests.py
+!vendor/
+!vendor/nccl-tests-v2.17.6.tar.gz

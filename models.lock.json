@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "name": "Qwen3-0.6B",
+      "repo": "Qwen/Qwen3-0.6B",
+      "kind": "llm",
+      "include": [
+        "*.json",
+        "*.safetensors",
+        "*.txt",
+        "LICENSE*",
+        "README.md"
+      ],
+      "purpose": "8 卡独立推理冒烟测试",
+      "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 11343,
+          "hash_type": "git-sha1",
+          "hash": "6634c8cc3133b3848ec74b9f275acaaa1ea618ab"
+        },
+        {
+          "path": "README.md",
+          "size": 13965,
+          "hash_type": "git-sha1",
+          "hash": "a50b19e76f5274f9ec99f5a5d99873dca5bff25e"
+        },
+        {
+          "path": "config.json",
+          "size": 726,
+          "hash_type": "git-sha1",
+          "hash": "f5c3703b78ae2a478ae15b247e9f855e0ce2107b"
+        },
+        {
+          "path": "generation_config.json",
+          "size": 239,
+          "hash_type": "git-sha1",
+          "hash": "20a8a9156fc8c3f25295ca067f61fdf120d517c5"
+        },
+        {
+          "path": "merges.txt",
+          "size": 1671853,
+          "hash_type": "git-sha1",
+          "hash": "31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 1503300328,
+          "hash_type": "sha256",
+          "hash": "f47f71177f32bcd101b7573ec9171e6a57f4f4d31148d38e382306f42996874b"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 11422654,
+          "hash_type": "sha256",
+          "hash": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 9732,
+          "hash_type": "git-sha1",
+          "hash": "417d038a63fa3de29cfde265caedae14d1a58d92"
+        },
+        {
+          "path": "vocab.json",
+          "size": 2776833,
+          "hash_type": "git-sha1",
+          "hash": "4783fe10ac3adce15ac8f358ef5462739852c569"
+        }
+      ]
+    },
+    {
+      "name": "Qwen3-8B",
+      "repo": "Qwen/Qwen3-8B",
+      "kind": "llm",
+      "include": [
+        "*.json",
+        "*.safetensors",
+        "*.txt",
+        "LICENSE*",
+        "README.md"
+      ],
+      "purpose": "8 卡独立推理吞吐测试",
+      "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 11343,
+          "hash_type": "git-sha1",
+          "hash": "6634c8cc3133b3848ec74b9f275acaaa1ea618ab"
+        },
+        {
+          "path": "README.md",
+          "size": 16660,
+          "hash_type": "git-sha1",
+          "hash": "ecc3ebd0849aa08d9484bd911dddfd5261b10d30"
+        },
+        {
+          "path": "config.json",
+          "size": 728,
+          "hash_type": "git-sha1",
+          "hash": "d46195ac87f837ad233d02b2f80f148bf7c005e0"
+        },
+        {
+          "path": "generation_config.json",
+          "size": 239,
+          "hash_type": "git-sha1",
+          "hash": "20a8a9156fc8c3f25295ca067f61fdf120d517c5"
+        },
+        {
+          "path": "merges.txt",
+          "size": 1671853,
+          "hash_type": "git-sha1",
+          "hash": "31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"
+        },
+        {
+          "path": "model-00001-of-00005.safetensors",
+          "size": 3996250744,
+          "hash_type": "sha256",
+          "hash": "31d6a825ae35f11fb85b195b4c42c146c051e446433125a215336abdf95cbf5f"
+        },
+        {
+          "path": "model-00002-of-00005.safetensors",
+          "size": 3993160032,
+          "hash_type": "sha256",
+          "hash": "5991236cea6fe21f3d43cab0f0e84448734fbbe0789816202989f2ddc9d18282"
+        },
+        {
+          "path": "model-00003-of-00005.safetensors",
+          "size": 3959604768,
+          "hash_type": "sha256",
+          "hash": "c5185c4794be2d8a9784d5753c9922db38df478ce11f9ed0b415b7304d896836"
+        },
+        {
+          "path": "model-00004-of-00005.safetensors",
+          "size": 3187841392,
+          "hash_type": "sha256",
+          "hash": "b5ee7de71fbf17db3d5704e0c8f2bc7d005ca9e1d7ca2aeb19827b0cfcaa917a"
+        },
+        {
+          "path": "model-00005-of-00005.safetensors",
+          "size": 1244659840,
+          "hash_type": "sha256",
+          "hash": "20c2d6366ab85c90786ccdd829cd2b9e7d30ef3b2ebbb998280e7e4014b542ff"
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "size": 32878,
+          "hash_type": "git-sha1",
+          "hash": "2b85c00f1b118961cd7a477e2bba0fe197a4ce1a"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 11422654,
+          "hash_type": "sha256",
+          "hash": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "size": 9732,
+          "hash_type": "git-sha1",
+          "hash": "417d038a63fa3de29cfde265caedae14d1a58d92"
+        },
+        {
+          "path": "vocab.json",
+          "size": 2776833,
+          "hash_type": "git-sha1",
+          "hash": "4783fe10ac3adce15ac8f358ef5462739852c569"
+        }
+      ]
+    },
+    {
+      "name": "SDXL-base-1.0",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "kind": "image",
+      "include": [
+        "model_index.json",
+        "LICENSE*",
+        "README.md",
+        "scheduler/*.json",
+        "tokenizer/*",
+        "tokenizer_2/*",
+        "text_encoder/config.json",
+        "text_encoder/model.fp16.safetensors",
+        "text_encoder_2/config.json",
+        "text_encoder_2/model.fp16.safetensors",
+        "unet/config.json",
+        "unet/diffusion_pytorch_model.fp16.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.fp16.safetensors"
+      ],
+      "purpose": "1024×1024 图像生成测试",
+      "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+      "files": [
+        {
+          "path": "LICENSE.md",
+          "size": 14109,
+          "hash_type": "git-sha1",
+          "hash": "af7e355e31c0d976933aa0d06759611151ad8c39"
+        },
+        {
+          "path": "README.md",
+          "size": 8668,
+          "hash_type": "git-sha1",
+          "hash": "3de812966870aa7122954891ce74faabc77335a9"
+        },
+        {
+          "path": "model_index.json",
+          "size": 609,
+          "hash_type": "git-sha1",
+          "hash": "6cc5138ddb67e9309c9b4e058e33e52087f1d215"
+        },
+        {
+          "path": "scheduler/scheduler_config.json",
+          "size": 479,
+          "hash_type": "git-sha1",
+          "hash": "e5bc8421e047838523be7acfb6720f167f7382f6"
+        },
+        {
+          "path": "text_encoder/config.json",
+          "size": 565,
+          "hash_type": "git-sha1",
+          "hash": "cde352ada4bb95fdad2fc503b8121257cef215a6"
+        },
+        {
+          "path": "text_encoder/model.fp16.safetensors",
+          "size": 246144152,
+          "hash_type": "sha256",
+          "hash": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+        },
+        {
+          "path": "text_encoder_2/config.json",
+          "size": 575,
+          "hash_type": "git-sha1",
+          "hash": "da1848b5ed17b676f021578838f12c4023b86379"
+        },
+        {
+          "path": "text_encoder_2/model.fp16.safetensors",
+          "size": 1389382176,
+          "hash_type": "sha256",
+          "hash": "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+        },
+        {
+          "path": "tokenizer/merges.txt",
+          "size": 524619,
+          "hash_type": "git-sha1",
+          "hash": "76e821f1b6f0a9709293c3b6b51ed90980b3166b"
+        },
+        {
+          "path": "tokenizer/special_tokens_map.json",
+          "size": 472,
+          "hash_type": "git-sha1",
+          "hash": "2c2130b544c0c5a72d5d00da071ba130a9800fb2"
+        },
+        {
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 737,
+          "hash_type": "git-sha1",
+          "hash": "2e8612a429492973fe60635b3f44a28b065cfac0"
+        },
+        {
+          "path": "tokenizer/vocab.json",
+          "size": 1059962,
+          "hash_type": "git-sha1",
+          "hash": "469be27c5c010538f845f518c4f5e8574c78f7c8"
+        },
+        {
+          "path": "tokenizer_2/merges.txt",
+          "size": 524619,
+          "hash_type": "git-sha1",
+          "hash": "76e821f1b6f0a9709293c3b6b51ed90980b3166b"
+        },
+        {
+          "path": "tokenizer_2/special_tokens_map.json",
+          "size": 460,
+          "hash_type": "git-sha1",
+          "hash": "ae0c5be6f35217e51c4c000fd325d8de0294e99c"
+        },
+        {
+          "path": "tokenizer_2/tokenizer_config.json",
+          "size": 725,
+          "hash_type": "git-sha1",
+          "hash": "a8438e020c4497a429240d6b89e0bf9a6e2ffa92"
+        },
+        {
+          "path": "tokenizer_2/vocab.json",
+          "size": 1059962,
+          "hash_type": "git-sha1",
+          "hash": "469be27c5c010538f845f518c4f5e8574c78f7c8"
+        },
+        {
+          "path": "unet/config.json",
+          "size": 1680,
+          "hash_type": "git-sha1",
+          "hash": "c8714c90f0e2409156da42781954416cb7df36af"
+        },
+        {
+          "path": "unet/diffusion_pytorch_model.fp16.safetensors",
+          "size": 5135149760,
+          "hash_type": "sha256",
+          "hash": "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+        },
+        {
+          "path": "vae/config.json",
+          "size": 642,
+          "hash_type": "git-sha1",
+          "hash": "a66a171ba7c8efb1a8fc3bdc64e65318eade8e13"
+        },
+        {
+          "path": "vae/diffusion_pytorch_model.fp16.safetensors",
+          "size": 167335342,
+          "hash_type": "sha256",
+          "hash": "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+        }
+      ]
+    }
+  ]
+}

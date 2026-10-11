@@ -1,0 +1,13 @@
+/models/
+/images/
+__pycache__/
+/tests/.test-tmp/
+/bundle.sha256.json
+/PACKAGE_STATUS.json
+/demo-report/
+/public-reference-preview/
+/b300-results/
+/tools/probe_results.json
+*.part
+*.tmp
+*.pyc

@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "selection_note": "固定版本的一节点八张 B300 实测；MLPerf v6.0 是已核实参考版本，不宣称为最新榜单。",
+  "references": [
+    {
+      "id": "oci-b300-8-allreduce-8g",
+      "kind": "nccl-tests",
+      "title": "Oracle OCI BM.GPU.B300.8 · 8 GiB FP32 SUM all-reduce",
+      "source": {
+        "publisher": "Oracle · OCI GPU Quickstarts",
+        "url": "https://github.com/oracle-quickstart/oci-gpu-quickstarts/blob/b4570535c0e8e6fbc01745bc50bfd9064787cb0a/nvidia/B300/README-B300.md#all-reduce---single-node",
+        "revision": "b4570535c0e8e6fbc01745bc50bfd9064787cb0a",
+        "verified_on": "2026-10-11",
+        "published_on": null
+      },
+      "system": {
+        "name": "BM.GPU.B300.8",
+        "gpu": "NVIDIA B300 SXM6 AC",
+        "gpus": 8,
+        "nodes": 1,
+        "cpu": "2 x Intel Xeon Platinum 8592+",
+        "power_limit_w": 1100,
+        "power_note": "来源 nvidia-smi 示例显示 1100W；基准运行功耗未单独披露。"
+      },
+      "workload": {
+        "threads": 1,
+        "gpus_per_thread": 8,
+        "min_bytes": 524288,
+        "max_bytes": 8589934592,
+        "step_factor": 2,
+        "warmup": 1,
+        "iterations": 20,
+        "aggregation": 1,
+        "validation": 1,
+        "cuda_graph": 0,
+        "nodes": 1,
+        "gpus": 8,
+        "collective": "all_reduce_perf"
+      },
+      "size_bytes": 8589934592,
+      "runtime": {
+        "nccl": "2.28.9",
+        "cuda": "13.1",
+        "nccl_tests": null
+      },
+      "metrics": [
+        {
+          "key": "latency_us",
+          "placement": "out_of_place",
+          "label": "非原地 延迟",
+          "unit": "us",
+          "value": 18006,
+          "direction": "lower"
+        },
+        {
+          "key": "algorithm_gbps",
+          "placement": "out_of_place",
+          "label": "非原地 算法带宽",
+          "unit": "GB/s",
+          "value": 477.05,
+          "direction": "higher"
+        },
+        {
+          "key": "bus_gbps",
+          "placement": "out_of_place",
+          "label": "非原地 总线带宽",
+          "unit": "GB/s",
+          "value": 834.84,
+          "direction": "higher"
+        },
+        {
+          "key": "latency_us",
+          "placement": "in_place",
+          "label": "原地 延迟",
+          "unit": "us",
+          "value": 17990,
+          "direction": "lower"
+        },
+        {
+          "key": "algorithm_gbps",
+          "placement": "in_place",
+          "label": "原地 算法带宽",
+          "unit": "GB/s",
+          "value": 477.49,
+          "direction": "higher"
+        },
+        {
+          "key": "bus_gbps",
+          "placement": "in_place",
+          "label": "原地 总线带宽",
+          "unit": "GB/s",
+          "value": 835.61,
+          "direction": "higher"
+        }
+      ],
+      "command": "all_reduce_perf -b 512k -e 8G -f 2 -g 8",
+      "note": "公开样例实测，仅采用单节点 8 卡 8 GiB 行；不使用跨尺寸平均值、两节点成绩或理论峰值。"
+    },
+    {
+      "id": "mlperf-6.0-0073-deepseek-r1-offline",
+      "kind": "context",
+      "title": "MLPerf Inference v6.0 · deepseek-r1 · Offline",
+      "source": {
+        "publisher": "MLCommons · NVIDIA · 6.0-0073",
+        "url": "https://github.com/mlcommons/inference_results_v6.0/blob/ab33b2144a9f822f69d24f78569f993d195ee7e5/summary_results.json",
+        "revision": "ab33b2144a9f822f69d24f78569f993d195ee7e5",
+        "verified_on": "2026-10-11",
+        "published_on": "2026-04-01",
+        "result_path": "./closed/NVIDIA/results/B300-SXM-270GBx8_TRT/deepseek-r1/Offline/performance/run_1"
+      },
+      "system": {
+        "name": "NVIDIA DGX B300 (8x B300-SXM-270GB, TensorRT)",
+        "gpu": "NVIDIA B300-SXM-270GB",
+        "gpus": 8,
+        "nodes": 1,
+        "cpu": "Intel(R) Xeon(R) Platinum 8570",
+        "power_limit_w": 1100
+      },
+      "workload": {
+        "model": "deepseek-r1",
+        "precision": "fp4",
+        "scenario": "Offline",
+        "suite": "MLPerf Inference v6.0",
+        "division": "closed",
+        "metric_scope": "whole_system",
+        "accuracy": "exact_match: 81.10756608933455  TOKENS_PER_SAMPLE: 3775.6280765724705"
+      },
+      "runtime": {
+        "software": "TensorRT 10.14, CUDA 13.1, cuDNN 9.17, TensorRT-LLM feat/1.2-mlpinf, NVIDIA Dynamo mlperf-v6.0-dynamo-v0.8.0, vLLM CentML:mlperf-inf-mm-q3vl-v6.0",
+        "os": "Ubuntu 24.04"
+      },
+      "metrics": [
+        {
+          "key": "tokens_per_second",
+          "label": "整机输出吞吐",
+          "unit": "Tokens/s",
+          "value": 70325.7,
+          "direction": "higher"
+        }
+      ],
+      "note": "当前 Qwen3 BF16 / Transformers 独立副本与此 MLPerf 模型、FP4、引擎、数据集和调度方式不同；仅展示公测参考值，不计算百分比。需要完整 MLPerf 同口径结果才可直接对比。"
+    },
+    {
+      "id": "mlperf-6.0-0073-llama2-70b-99-offline",
+      "kind": "context",
+      "title": "MLPerf Inference v6.0 · llama2-70b-99 · Offline",
+      "source": {
+        "publisher": "MLCommons · NVIDIA · 6.0-0073",
+        "url": "https://github.com/mlcommons/inference_results_v6.0/blob/ab33b2144a9f822f69d24f78569f993d195ee7e5/summary_results.json",
+        "revision": "ab33b2144a9f822f69d24f78569f993d195ee7e5",
+        "verified_on": "2026-10-11",
+        "published_on": "2026-04-01",
+        "result_path": "./closed/NVIDIA/results/B300-SXM-270GBx8_TRT/llama2-70b-99/Offline/performance/run_1"
+      },
+      "system": {
+        "name": "NVIDIA DGX B300 (8x B300-SXM-270GB, TensorRT)",
+        "gpu": "NVIDIA B300-SXM-270GB",
+        "gpus": 8,
+        "nodes": 1,
+        "cpu": "Intel(R) Xeon(R) Platinum 8570",
+        "power_limit_w": 1100
+      },
+      "workload": {
+        "model": "llama2-70b-99",
+        "precision": "fp4",
+        "scenario": "Offline",
+        "suite": "MLPerf Inference v6.0",
+        "division": "closed",
+        "metric_scope": "whole_system",
+        "accuracy": "ROUGE1: 44.7714  ROUGE2: 22.3739  ROUGEL: 29.1483  TOKENS_PER_SAMPLE: 273.1"
+      },
+      "runtime": {
+        "software": "TensorRT 10.14, CUDA 13.1, cuDNN 9.17, TensorRT-LLM feat/1.2-mlpinf, NVIDIA Dynamo mlperf-v6.0-dynamo-v0.8.0, vLLM CentML:mlperf-inf-mm-q3vl-v6.0",
+        "os": "Ubuntu 24.04"
+      },
+      "metrics": [
+        {
+          "key": "tokens_per_second",
+          "label": "整机输出吞吐",
+          "unit": "Tokens/s",
+          "value": 112954.0,
+          "direction": "higher"
+        }
+      ],
+      "note": "当前 Qwen3 BF16 / Transformers 独立副本与此 MLPerf 模型、FP4、引擎、数据集和调度方式不同；仅展示公测参考值，不计算百分比。需要完整 MLPerf 同口径结果才可直接对比。"
+    },
+    {
+      "id": "mlperf-6.0-0073-llama3.1-8b-offline",
+      "kind": "context",
+      "title": "MLPerf Inference v6.0 · llama3.1-8b · Offline",
+      "source": {
+        "publisher": "MLCommons · NVIDIA · 6.0-0073",
+        "url": "https://github.com/mlcommons/inference_results_v6.0/blob/ab33b2144a9f822f69d24f78569f993d195ee7e5/summary_results.json",
+        "revision": "ab33b2144a9f822f69d24f78569f993d195ee7e5",
+        "verified_on": "2026-10-11",
+        "published_on": "2026-04-01",
+        "result_path": "./closed/NVIDIA/results/B300-SXM-270GBx8_TRT/llama3.1-8b/Offline/performance/run_1"
+      },
+      "system": {
+        "name": "NVIDIA DGX B300 (8x B300-SXM-270GB, TensorRT)",
+        "gpu": "NVIDIA B300-SXM-270GB",
+        "gpus": 8,
+        "nodes": 1,
+        "cpu": "Intel(R) Xeon(R) Platinum 8570",
+        "power_limit_w": 1100
+      },
+      "workload": {
+        "model": "llama3.1-8b",
+        "precision": "fp4",
+        "scenario": "Offline",
+        "suite": "MLPerf Inference v6.0",
+        "division": "closed",
+        "metric_scope": "whole_system",
+        "accuracy": "ROUGE1: 38.5159  ROUGE2: 15.9339  ROUGEL: 24.3491  ROUGELSUM: 35.6714  GEN_LEN: 8185045"
+      },
+      "runtime": {
+        "software": "TensorRT 10.14, CUDA 13.1, cuDNN 9.17, TensorRT-LLM feat/1.2-mlpinf, NVIDIA Dynamo mlperf-v6.0-dynamo-v0.8.0, vLLM CentML:mlperf-inf-mm-q3vl-v6.0",
+        "os": "Ubuntu 24.04"
+      },
+      "metrics": [
+        {
+          "key": "tokens_per_second",
+          "label": "整机输出吞吐",
+          "unit": "Tokens/s",
+          "value": 165432.0,
+          "direction": "higher"
+        }
+      ],
+      "note": "当前 Qwen3 BF16 / Transformers 独立副本与此 MLPerf 模型、FP4、引擎、数据集和调度方式不同；仅展示公测参考值，不计算百分比。需要完整 MLPerf 同口径结果才可直接对比。"
+    }
+  ]
+}
