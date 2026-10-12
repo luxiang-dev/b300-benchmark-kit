@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline localhost dashboard for NVIDIA GPU and CPU server evidence workflows; use SSH forwarding remotely."""
+"""Offline NVIDIA/CPU server dashboard with local, LAN and operator-managed public access."""
 import argparse
 import csv
 from datetime import datetime, timezone
@@ -25,6 +25,7 @@ from evidence import export_evidence
 from telemetry_guard import validate_sample
 import job_lock
 import hardware_profiles as hp
+from network_access import AccessPolicy, load_token
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = [
@@ -502,14 +503,29 @@ class JobManager:
             self.worker.join(timeout=55)
 
 
-def make_handler(manager):
+def make_handler(manager, access=None):
+    access = access or AccessPolicy()
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(15)
+
         def log_message(self, *_):
             pass
 
         def _host_ok(self):
             port = self.server.server_address[1]
-            return self.headers.get('Host') in (f'127.0.0.1:{port}', f'localhost:{port}')
+            return len(self.headers.get_all('Host', [])) == 1 and access.host_ok(self.headers.get('Host'), port)
+
+        def _authenticate(self):
+            if access.authenticated(self.headers.get('Authorization')):
+                return True
+            self.send_response(401)
+            self.send_header('WWW-Authenticate', 'Basic realm="Server acceptance", charset="UTF-8"')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return False
 
         def _json(self, data, status=200):
             raw = json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
@@ -540,6 +556,8 @@ def make_handler(manager):
         def do_GET(self):
             if not self._host_ok():
                 self._json(dict(error='Invalid Host'), 403)
+                return
+            if not self._authenticate():
                 return
             parsed = urlsplit(self.path)
             path = unquote(parsed.path)
@@ -577,9 +595,12 @@ def make_handler(manager):
                 self._json(dict(error='Not found'), 404)
 
         def do_POST(self):
-            port = self.server.server_address[1]
-            origins = (f'http://127.0.0.1:{port}', f'http://localhost:{port}')
-            if not self._host_ok() or self.headers.get('Origin') not in (None, *origins) or not secrets.compare_digest(self.headers.get('X-CSRF-Token', '').encode(), manager.token.encode()):
+            if not self._host_ok():
+                self._json(dict(error='Invalid Host'), 403)
+                return
+            if not self._authenticate():
+                return
+            if not access.origin_ok(self.headers.get('Origin'), self.headers.get('Host')) or not secrets.compare_digest(self.headers.get('X-CSRF-Token', '').encode(), manager.token.encode()):
                 self._json(dict(error='Invalid origin or session token'), 403)
                 return
             if self.headers.get_content_type() != 'application/json':
@@ -611,6 +632,10 @@ def make_handler(manager):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--host', default='0.0.0.0', help='Listen address; default all IPv4 interfaces. Use 127.0.0.1 for local-only access')
+    parser.add_argument('--allowed-host', action='append', default=[], help='Optional accepted hostname[:port]; repeat for multiple LAN/public mappings')
+    parser.add_argument('--public-origin', action='append', default=[], help='External http/https origin if your proxy rewrites Host; repeat for multiple mappings')
+    parser.add_argument('--access-token-file', type=Path, help='Optional Basic Auth token file (username operator); use HTTPS on the public mapping')
     parser.add_argument('--results', type=Path, default=ROOT / 'b300-results/dashboard')
     parser.add_argument('--image', default='b300-test:1.0')
     parser.add_argument('--preview', action='store_true', help='Read-only interface preview without GPU execution')
@@ -621,10 +646,17 @@ def main():
     if sys.platform != 'linux' and not args.preview:
         parser.error('Run on Ubuntu/Linux, or use --preview for a read-only preview')
     manager = JobManager(args.results, args.image, args.preview, args.max_temp)
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), make_handler(manager))
+    try:
+        access = AccessPolicy(remote=args.host not in ('127.0.0.1', 'localhost'), allowed_hosts=args.allowed_host,
+                              token=load_token(args.access_token_file) if args.access_token_file else None,
+                              public_origins=args.public_origin)
+    except (ValueError, OSError) as error:
+        parser.error(str(error))
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(manager, access))
     server.daemon_threads = True
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    print(f'Server acceptance dashboard: http://127.0.0.1:{args.port} (localhost only)', flush=True)
+    print(f'Server acceptance dashboard: listen {args.host}:{args.port}; local http://127.0.0.1:{args.port}', flush=True)
+    print('Access authentication: ' + ('enabled (operator)' if access.token else 'mapping/proxy managed; application authentication disabled'), flush=True)
     print('Run evidence contains device serials and host information; review before sharing.', flush=True)
     try:
         server.serve_forever()

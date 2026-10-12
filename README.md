@@ -11,6 +11,7 @@
 公测对比支持 Oracle 的单节点 8×B300 NCCL all-reduce 测试口径；独立的 DeepSeek-R1 扩展接入 NVIDIA 官方 MLPerf Inference v6.0 Offline 的性能和准确率流程，参考整机吞吐 **70,325.7 Tokens/s**。本地对比不代表 MLCommons 认证。
 
 - [通用验货与全流程可视化：准备、本地/Windows操作、参数、结果](docs/通用验货与可视化.md)
+- [局域网/公网映射：监听地址、代理与可选口令](docs/公网映射访问.md)
 - [原 B300 专项：Ubuntu 准备、运行、结果与排错](docs/使用总览.md)
 - [原 8×B300 可视化验真说明](docs/可视化验真操作.md)
 - [采购验货门禁、当前遗漏与厂商材料清单](docs/采购验货要求.md)
@@ -30,10 +31,12 @@ python3 bundle.py verify --hardware-only
 将完整目录复制到 Ubuntu 服务器本地 SSD 后启动：
 
 ```bash
-python3 dashboard.py --port 8765 --results /data/b300-results/dashboard
+python3 dashboard.py --host 0.0.0.0 --port 8765 --results /data/b300-results/dashboard
 ```
 
 Ubuntu 浏览器打开 `http://127.0.0.1:8765`；Windows 使用 `ssh -N -L 8765:127.0.0.1:8765 USER@SERVER` 后打开同一地址。在界面填写预期型号/卡数和测试参数，再选择“整机检查（无需 GPU）”或 GPU 流程，监控并导出报告。未知采购型号选自动识别、卡数填 0；此时不核实是否少配。Windows `python dashboard.py --preview` 为只读预览。
+
+默认监听所有 IPv4 网卡，也可直接访问 `http://服务器IP:8765` 或你自己的公网映射 URL，无需 SSH 隧道。映射端负责 HTTPS/认证；应用提供可选 `--access-token-file`。仅本机使用指定 `--host 127.0.0.1`，代理改写 Host 时指定 `--public-origin`，见 [公网映射说明](docs/公网映射访问.md)。
 
 命令行备用：`bash run.sh server /data/server-results/cpu-001`、`bash run.sh identity /data/server-results/id-001`、`bash run.sh authenticity /data/server-results/gpu-001`。详细范围和中止方法见 [通用操作说明](docs/通用验货与可视化.md)。镜像默认 CUDA 13；老 GPU 须选择兼容的 `BASE_IMAGE` 重新构建，不能保证默认镜像覆盖所有历史型号。旧镜像标签/文件名、仓库地址保留兼容，不限制型号。
 
