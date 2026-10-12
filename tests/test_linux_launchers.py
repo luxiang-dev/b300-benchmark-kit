@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import bundle
+import job_lock
 import test_kit as kit
 
 MOCK_TOOL = '''#!/usr/bin/env python3
@@ -75,8 +76,13 @@ class LinuxLauncherTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_mode(self, mode):
-        return subprocess.run(['bash', str(self.source / 'run.sh'), mode, str(self.out)],
-                              env=self.env, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(['bash', str(self.source / 'run.sh'), mode, str(self.out)],
+                                env=self.env, capture_output=True, text=True, timeout=30)
+        # A telemetry subshell/sleep must not retain the CLI's inherited lock
+        # after completion. This assertion caught an actual Linux-only leak.
+        descriptor = job_lock.acquire()
+        os.close(descriptor)
+        return result
 
     def test_inventory_works_without_gpu_runtime(self):
         proc = self.run_mode('inventory')

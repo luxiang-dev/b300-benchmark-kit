@@ -87,6 +87,7 @@ docker image inspect "$image_id" > "$OUT/deepseek-image-used.json"
 record preflight PASS 0
 telemetry_start=$(python3 -c 'import time; print(time.time())')
 (
+    if [[ "${B300_GPU_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then exec {B300_GPU_LOCK_FD}>&-; fi
     printf 'timestamp,index,uuid,temperature_c,power_w,memory_used_mib,gpu_util_percent\n'
     while true; do
         nvidia-smi --query-gpu=timestamp,index,uuid,temperature.gpu,power.draw,memory.used,utilization.gpu --format=csv,noheader,nounits || exit 1
