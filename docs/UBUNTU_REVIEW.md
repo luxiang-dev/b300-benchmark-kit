@@ -2,6 +2,31 @@
 
 本次已修复首次审查中的主要问题，并加入 Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 的持续验证。完整使用入口为 [总使用说明](使用总览.md)。
 
+## 最新可视化验真版本
+
+新增中文本地工作台、PCI/CUDA/UUID/序列号交叉核验、约85% HBM 三轮地址模式写读、整机清单与有限 CPU/RAM/结果盘功能抽查、实时温度中止，以及带 SHA256 的原始证据 ZIP。支持 Ubuntu 本地浏览器与 Windows SSH 转发。硬件包不下载 Qwen/SDXL 权重，操作步骤见 [全流程说明](可视化验真操作.md)。
+
+受测源码提交为 `4d55143be9109676d997f50c4d4ef763cd7ec932`：[本次 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38200551379)。已读取两个 job 的原始日志，结论为：
+
+| 环境 | unittest | 其他检查 |
+| --- | --- | --- |
+| [Ubuntu 22.04 / Python 3.10](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38200551379/job/114652770196) | 160 项通过，无跳过 | Bash、20个Linux入口UTF-8/LF、前端 smoke、CLI 通过 |
+| [Ubuntu 24.04 / Python 3.12](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38200551379/job/114652770103) | 160 项通过，无跳过 | 同上 |
+
+本机 Windows 同样通过160项测试，其中9项因 Linux 进程组/flock 或符号链接权限条件跳过；上面的 Ubuntu 记录实际执行了这些项目。前端另外在真实只读后端进行 1440×1000 / 390×844 浏览器检查，无页面错误和横向溢出，没有生成模拟 GPU 卡或性能。
+
+本次重点修复：
+
+- 摘要 PASS 不能覆盖启动器异常退出；host-only 身份采集的最终硬件/报告失败会升级退出码。
+- 实时遥测核对实际 UUID 集合、索引覆盖、有限数值及范围，重复身份或丢卡立即停止。
+- 显存 PASS 必须具备实际分配预算和三轮完整写读；重复读验字节不能冒充物理容量。
+- 布尔值不能冒充整数 GPU rank；阶段未知状态或非零 PASS 不能通过报告。
+- 本机控制接口限定 localhost/同源/token，拒绝非法参数、路径逃逸、日志符号链接及 NUL 路径。
+- 取消终止本作业进程组和容器，同用户第二控制器受 flock 限制；导出时禁止取消，最终 `run-result.json` 与 ZIP 哈希一致。
+- 已证明成功且没有访问警告的空内核日志窗口，和无法读取内核日志明确区分。
+
+CPU/HTTP/启动器故障注入依旧不是 CUDA、真实 Docker GPU 镜像、NVSwitch 或 DCGM 的实机验证。整机功能抽查默认仅 256 MiB RAM / 128 MiB 临时结果文件，NIC/BMC 信息是清单，不自动证明线速或健康；证据一致不是厂家正品认证。
+
 ## 已修复
 
 | 问题 | 修复与验证 |
@@ -20,7 +45,7 @@
 
 新的轻量环境预检在读取约 395 GiB 权重之前进行，避免环境明显不完整时先花时间扫描全部权重；最终完整模型 hash 校验仍保留。
 
-## 自动化验证范围
+## 原阶段自动化验证记录（68项）
 
 本机已通过 68 项 unittest（其中 4 项 Linux 专用集成测试在 Windows 上跳过），三个 Bash 脚本逐一通过语法检查，13 个 Linux 入口通过 UTF-8/LF 检查。回归探针已确认缺失/单卡遥测为 REVIEW、错误 token/dtype 被拒绝、外部 CONFIG_DIR 未继承。
 
@@ -51,7 +76,7 @@ GitHub 仓库已发布到正确账号 [luxiang-dev/b300-benchmark-kit](https://g
 
 1. **实机闭环**：在 Ubuntu 24.04、空闲 8×B300 上依次保存 quick / compare / full / deepseek 成功或失败的原始证据，补齐最终软件与镜像 ID。
 2. **统一 DeepSeek 资源清单**：将外部源码、venv、数据、HF 缓存、镜像 tar 的 hash 和位置封装起来。当前基础 seal 仅覆盖基础包。
-3. **独立 smoke 与温度 watchdog**：先短时检验 endpoint/准确率全链路；缩短结果标为不可与完整 MLPerf 结果比较。DeepSeek 的温度目前在报告阶段判定，尚未实时终止服务。
+3. **扩展 CLI 监控与 DeepSeek smoke**：网页启动的所有 GPU 重负载和真实性 CLI 已有独立主机 watchdog；直接旧基础/DeepSeek CLI 仍需统一此能力。先短时检验 endpoint/准确率全链路，缩短结果必须标为不可与完整 MLPerf 结果比较。
 4. **减少同一次准备的重复读盘**：在有可信校验记录时复用同阶段校验，现场整包/权重完整校验仍保留。
 5. **真实官方日志回归和同机重复测量**：扩充成功日志兼容性样本，再根据同配置多次测量分布设置性能告警；不把任意公测百分比直接作为硬件合格线。
 

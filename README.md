@@ -2,7 +2,7 @@
 
 面向 Ubuntu 单节点 **8×NVIDIA B300** 的离线身份核验、整机功能抽查、稳定性测试与公测性能对比工具，提供中文可视化工作台。
 
-**Ubuntu 22.04 / Python 3.10 和 Ubuntu 24.04 / Python 3.12 均通过 68 项测试，无跳过**，Bash、UTF-8/LF 和 CLI 检查通过。[CI 记录](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38196116494)。已修复离线准确率缓存、配置覆盖、数据/输出校验与遥测缺失误判等问题。**GPU 部分仍待实机验证**；CPU/模拟启动测试不代表真实 B300 测试通过，范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
+**Ubuntu 22.04 / Python 3.10 和 Ubuntu 24.04 / Python 3.12 均通过 160 项测试，无跳过**；前端、Bash、UTF-8/LF 和 CLI 检查通过。[CI 记录](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38200551379)。测试覆盖身份/显存证据判断、整机有限抽查、HTTP 控制、取消/清理、封装和原有 MLPerf 流程。**GPU 部分仍待实机验证**；CPU/模拟启动测试不代表真实 B300 测试通过，范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
 
 包含 PCI/CUDA/UUID/序列号交叉核验、每卡约 85% HBM 地址模式写读、GPU/ECC/拓扑、BF16 压力、8 卡 NCCL、服务器功能抽查、Qwen/SDXL，以及可下载的 HTML/JSON/原始证据 ZIP。软件证据一致和负载通过不能替代厂商实物与采购来源确认。
 
