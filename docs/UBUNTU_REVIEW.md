@@ -2,7 +2,33 @@
 
 本次已修复首次审查中的主要问题，并加入 Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 的持续验证。完整使用入口为 [总使用说明](使用总览.md)。
 
-## 最新可视化验真版本
+## 最新采购验货加严版本
+
+用户明确主要用途为大额服务器采购验货，且目前未知整机型号、具体配置和验收指标。此版本将技术 PASS 和采购验收独立：缺少书面配置、实物/保修来源及完整 OEM 验收时，采购状态固定保留 NOT_ACCEPTED / BLOCKED，不自动宣布收货通过。卖方材料清单及建议步骤见 [采购验货要求](采购验货要求.md)。
+
+受测源码为 `8008423019c26cb7bd2606e79ce23811b4d5c14d`：[最终 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38207992169)。两个原始 job 日志均已核对：
+
+| 环境 | unittest | 其他检查 |
+| --- | --- | --- |
+| [Ubuntu 22.04 / Python 3.10](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38207992169/job/114675656254) | 258 项通过，无跳过 | Bash、27个Linux入口UTF-8/LF、前端、CLI 通过 |
+| [Ubuntu 24.04 / Python 3.12](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38207992169/job/114675656144) | 258 项通过，无跳过 | 同上 |
+
+本机 Windows 最终258项通过，13项因Linux flock/进程组或符号链接条件跳过；上述Ubuntu均实际执行。初次Ubuntu审查抓到后台遥测/sleep继承CLI锁而延迟释放的问题；已在两条Shell入口关闭监控子进程的锁FD，并在每个Linux启动器测试结束后立即断言锁可重新取得，最终CI全部通过。
+
+此版本补齐的严重问题包括：
+
+- 新结果绑定本轮运行、快照 SHA、UUID、PCI、CUDA架构和容量；只写PASS、少卡、重复结果或混用陈旧日志不能通过。
+- 时间不足、覆盖缩水、NCCL口径不全纳入判断；显存增加独立CPU算法抽查，并用NumPy小chunk实际执行3轮测试路径，覆盖错误生产者/虚假equal/非抽查位置损坏/地址别名。
+- 寿命与易失ECC、corrected新增、行重映射、NVLink/fabric、恢复动作、DRAM不可读以及非空但访问不完整的内核日志均不再被忽略。
+- DCGM需可证明核心测试逐项覆盖全部GPU；未知格式/缺实体/跳过/警告不能算完整通过。
+- 只读SMART/BMC前后快照重核原始字节SHA和健康字段；缓存PASS、当前故障、寿命/SEL、权限/格式缺失分别处理。RAID隐藏成员和虚拟后端仍需OEM补证。
+- 派生 `observed-inventory.json`，缺证保持UNKNOWN，明确OS RAM/磁盘/接口不等于实物DIMM/SSD/NIC完整清单，不自动冒充采购BOM。
+- 封存按实际ZIP字节计算SHA，证据变化拒绝导出；写盘满/挂起不阻断停止信号，取消状态不被完成边界覆盖，资源在写盘失败时仍释放。
+- 网页与CLI共享锁并验证继承FD；拒绝残留结果目录，并检查systemd/cgroup内存预算。
+
+这些是程序的CPU/模拟可靠性验证，不是买方真实8×B300的测试，也不替代厂商离线现场诊断、实物来源/保修核验、全主机RAM/成员盘/NIC/电源/冷启动验收。
+
+## 前阶段可视化验真记录（160项）
 
 新增中文本地工作台、PCI/CUDA/UUID/序列号交叉核验、约85% HBM 三轮地址模式写读、整机清单与有限 CPU/RAM/结果盘功能抽查、实时温度中止，以及带 SHA256 的原始证据 ZIP。支持 Ubuntu 本地浏览器与 Windows SSH 转发。硬件包不下载 Qwen/SDXL 权重，操作步骤见 [全流程说明](可视化验真操作.md)。
 
