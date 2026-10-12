@@ -24,7 +24,14 @@
 
 本机已通过 68 项 unittest（其中 4 项 Linux 专用集成测试在 Windows 上跳过），三个 Bash 脚本逐一通过语法检查，13 个 Linux 入口通过 UTF-8/LF 检查。回归探针已确认缺失/单卡遥测为 REVIEW、错误 token/dtype 被拒绝、外部 CONFIG_DIR 未继承。
 
-待执行 GitHub workflow：[Ubuntu validation](https://github.com/luxiang-dev/b300-benchmark-kit/actions/workflows/ubuntu.yml)。目标账号已按用户更正为 luxiang-dev；目前连接与本机凭据仍显示旧账号，推送还遇到 GitHub TLS 连接失败。**尚未在 Ubuntu runner 执行**，实际运行链接在正确账号授权及推送完成后补充。
+GitHub 仓库已发布到正确账号 [luxiang-dev/b300-benchmark-kit](https://github.com/luxiang-dev/b300-benchmark-kit)，并于 2026-10-12 完成实际 Ubuntu runner 验证：[完整 CI 运行记录](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38196116494)。受测代码提交为 `35514431c8034c78aab57aea938776ced4d7db3f`。
+
+| 环境 | unittest | Bash / UTF-8 LF | CLI smoke |
+| --- | --- | --- | --- |
+| [Ubuntu 22.04 / Python 3.10](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38196116494/job/114639012415) | 68 项全部通过，无跳过 | 通过 | 通过 |
+| [Ubuntu 24.04 / Python 3.12](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38196116494/job/114639012269) | 68 项全部通过，无跳过 | 通过 | 通过 |
+
+已核对两个 job 的原始日志，四个 Linux 专用启动测试均实际执行并通过。CI 对纯 Markdown 文档修改不重复运行；代码、依赖、脚本和 workflow 变化仍触发验证。
 
 验证包含 CPU 故障注入、数据一致性、token 格式/长度、离线缓存准备，以及真实 Linux 下的 inventory、容器阶段错误码传播、失败后报告/清理、GB300 拒绝和 DeepSeek Docker 挂载参数。Linux 启动测试明确使用模拟 nvidia-smi / Docker，临时 seal 和数据仅为测试夹具，不代表真实硬件或镜像。
 

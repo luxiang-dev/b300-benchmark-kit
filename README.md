@@ -2,7 +2,7 @@
 
 面向 Linux 单节点 **8×NVIDIA B300** 的离线功能测试与公测性能对比工具。
 
-**GPU 部分仍待实机验证。** 已修复离线准确率缓存、配置覆盖、数据/输出校验与遥测缺失误判等问题，并加入 Ubuntu 22.04 / 24.04 自动化验证。验证范围及结果见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)；CPU/模拟启动测试不代表真实 B300 测试通过。
+**Ubuntu 22.04 / Python 3.10 和 Ubuntu 24.04 / Python 3.12 均通过 68 项测试，无跳过**，Bash、UTF-8/LF 和 CLI 检查通过。[CI 记录](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38196116494)。已修复离线准确率缓存、配置覆盖、数据/输出校验与遥测缺失误判等问题。**GPU 部分仍待实机验证**；CPU/模拟启动测试不代表真实 B300 测试通过，范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
 
 包含 GPU/ECC/拓扑采集、BF16 计算与显存压力测试、8 卡 NCCL 通信、Qwen 与 SDXL 功能测试，以及中文 HTML/JSON 报告。
 
