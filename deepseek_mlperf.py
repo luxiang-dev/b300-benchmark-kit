@@ -251,9 +251,6 @@ def check(workspace):
     missing = [x for x in required if not (workspace / x).is_file()]
     if missing:
         raise RuntimeError("DeepSeek MLPerf assets missing: " + ", ".join(missing))
-    import prepare_deepseek_accuracy
-    prepare_deepseek_accuracy.verify_cache(workspace)
-    accuracy_environment(workspace)
     if not (workspace / "3rdparty/trtllm").is_dir():
         raise RuntimeError("Prepare the official 3rdparty/trtllm checkout")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
@@ -267,6 +264,9 @@ def check(workspace):
         raise RuntimeError("Use the pinned v6.0 MLCommons dependency: " + MLCOMMONS_REVISION)
     subprocess.run(["git", "diff", "--exit-code", "HEAD", "--", "loadgen", "tools/submission/submission_checker",
                     "language/deepseek-r1/eval_accuracy.py"], cwd=mlc, check=True, stdout=subprocess.DEVNULL)
+    import prepare_deepseek_accuracy
+    prepare_deepseek_accuracy.verify_cache(workspace)
+    accuracy_environment(workspace)
     model = read_json(workspace / MODEL / "config.json")
     if model.get("model_type") != "deepseek_v3" or model.get("num_hidden_layers") != 61 or model.get("n_routed_experts") != 256:
         raise RuntimeError("Requires full DeepSeek-R1; distilled/small models are not this benchmark")
@@ -328,7 +328,10 @@ def stop(proc):
     except ProcessLookupError:
         pass
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         proc.wait()
 
 

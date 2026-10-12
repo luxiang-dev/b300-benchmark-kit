@@ -22,7 +22,9 @@
 
 ## 自动化验证范围
 
-GitHub workflow：[Ubuntu validation](https://github.com/luxiang33333/b300-benchmark-kit/actions/workflows/ubuntu.yml)。当前实际执行结果及链接在完成 CI 后补充。
+本机已通过 68 项 unittest（其中 4 项 Linux 专用集成测试在 Windows 上跳过），三个 Bash 脚本逐一通过语法检查，13 个 Linux 入口通过 UTF-8/LF 检查。回归探针已确认缺失/单卡遥测为 REVIEW、错误 token/dtype 被拒绝、外部 CONFIG_DIR 未继承。
+
+待执行 GitHub workflow：[Ubuntu validation](https://github.com/luxiang20041020-eng/b300-benchmark-kit/actions/workflows/ubuntu.yml)。目标账号已按用户更正为 luxiang20041020-eng；目前连接与本机凭据仍显示旧账号，推送还遇到 GitHub TLS 连接失败。**尚未在 Ubuntu runner 执行**，实际运行链接在正确账号授权及推送完成后补充。
 
 验证包含 CPU 故障注入、数据一致性、token 格式/长度、离线缓存准备，以及真实 Linux 下的 inventory、容器阶段错误码传播、失败后报告/清理、GB300 拒绝和 DeepSeek Docker 挂载参数。Linux 启动测试明确使用模拟 nvidia-smi / Docker，临时 seal 和数据仅为测试夹具，不代表真实硬件或镜像。
 
