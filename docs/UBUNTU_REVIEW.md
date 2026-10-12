@@ -2,7 +2,15 @@
 
 本次已修复首次审查中的主要问题，并加入 Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 的持续验证。当前完整使用入口为 [通用验货与全流程可视化](通用验货与可视化.md)。
 
-## 最新通用 NVIDIA / CPU 版本
+## 最新局域网与公网映射版本
+
+受测源码 `9a383c4b5a66e124edaf3fa7b639e865f18b9ff1`：[最终 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38233634415)。已核对两个原始日志：Ubuntu 24.04 / Python 3.12 为 **287 tests / OK / 无跳过（45.046 秒）**，Ubuntu 22.04 / Python 3.10 为 **287 tests / OK / 无跳过（46.460 秒）**。Windows 全量 **287 tests / OK / 跳过 15 项**，前端和 29 个 Linux 入口的编码检查通过。
+
+默认监听 `0.0.0.0:8765`，接受合法 LAN/公网映射 Host；支持 `--host`、`--allowed-host`、代理改写所需 `--public-origin` 和可选 `--access-token-file`。本地-only 模式仍拒绝外部 Host。新增测试覆盖外部 HTTP/HTTPS Origin、映射启动/停止、CSRF、Host 白名单、伪造转发头、口令文件、未登录页面/API/报告及连续 20 次未登录 POST 拒绝且未启动任务。
+
+Windows 全量发现过未读取 POST 请求体即关闭 401 响应时的 TCP 中断。最终版只丢弃小型声明请求体后返回认证挑战，不解析或执行未登录请求；Windows 和 Ubuntu 验证通过。测试服务器仅绑定回环，不会发布真实主机。公网映射、域名、HTTPS 和防火墙由用户自行配置，未对外部网络进行部署或验证。操作见 [公网映射说明](公网映射访问.md)。
+
+## 先前通用 NVIDIA / CPU 版本
 
 受测源码为 `03fbf0d2d78a290e5484bdab614ee15f27192c77`：[实际 Ubuntu CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38229275461)。两个原始 job 日志均已核对：
 
