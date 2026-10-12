@@ -126,6 +126,9 @@ class RemoteHTTPTests(unittest.TestCase):
             self.assertEqual(self.request('GET','/api/session',headers={'Authorization':value})[0],401)
         authorization='Basic '+base64.b64encode(('operator:'+self.policy.token).encode()).decode()
         self.assertEqual(self.request('GET','/api/session',headers={'Authorization':authorization})[0],200)
-        self.assertEqual(self.request('POST','/api/jobs',dict(profile='server'),authenticated=True)[0],401)
+        with patch.object(self.manager,'start') as start:
+            for _ in range(20):
+                self.assertEqual(self.request('POST','/api/jobs',dict(profile='server'),authenticated=True)[0],401)
+            start.assert_not_called()
         with patch.object(self.manager,'start',return_value='synthetic-only'):
             self.assertEqual(self.request('POST','/api/jobs',dict(profile='server'),headers={'Authorization':authorization},authenticated=True)[0],202)

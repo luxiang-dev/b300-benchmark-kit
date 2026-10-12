@@ -520,6 +520,17 @@ def make_handler(manager, access=None):
         def _authenticate(self):
             if access.authenticated(self.headers.get('Authorization')):
                 return True
+            # Drain only small, declared POST bodies before closing an HTTP/1.0
+            # challenge response. Closing with unread bytes can produce a TCP
+            # reset and hide the 401 on Windows. Do not parse or execute them.
+            if self.command == 'POST':
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if 0 < length <= 4096:
+                        self.connection.settimeout(1)
+                        self.rfile.read(length)
+                except (ValueError, OSError):
+                    pass
             self.send_response(401)
             self.send_header('WWW-Authenticate', 'Basic realm="Server acceptance", charset="UTF-8"')
             self.send_header('Cache-Control', 'no-store')
