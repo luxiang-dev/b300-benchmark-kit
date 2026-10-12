@@ -5,6 +5,7 @@ profile="${1:-quick}"
 if [[ "$profile" == deepseek ]]; then exec bash "$ROOT/run_deepseek_mlperf.sh" "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-deepseek}"; fi
 if [[ "$profile" == identity || "$profile" == authenticity ]]; then exec python3 "$ROOT/run_authenticity.py" --profile "$profile" --out "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}" --image "${B300_IMAGE:-b300-test:1.0}"; fi
 case "$profile" in inventory|quick|full|burn|compare) ;; *) echo "Usage: bash run.sh [inventory|identity|authenticity|quick|full|burn|compare|deepseek] [output-directory]" >&2; exit 2 ;; esac
+if [[ "$profile" != inventory && -z "${B300_GPU_LOCK_FD:-}" ]]; then exec python3 "$ROOT/job_lock.py" -- bash "$ROOT/run.sh" "$@"; fi
 OUT="${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}"
 mkdir -p -- "$OUT"
 OUT="$(cd -- "$OUT" && pwd)"
@@ -15,7 +16,7 @@ telemetry_start=""
 container_name="b300-test-$$-$(date +%s)"
 export ROOT OUT PROFILE="$profile"
 python3 - <<'PY'
-import json,os
+import json,os,uuid,time
 from pathlib import Path
 p=os.environ['PROFILE']
 required=[] if p=='inventory' else ['environment','stress','nccl','llm-Qwen3-0.6B','image-SDXL-base-1.0']
@@ -24,7 +25,10 @@ if p in ('full','burn','compare'): required += ['nccl-public']
 if p=='compare': required=['environment','nccl-public']
 limit=int(os.environ.get('MAX_GPU_TEMP','85'))
 if not 1 <= limit < 120: raise ValueError('MAX_GPU_TEMP must be an integer from 1 to 119')
-Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':8,'required':required,'max_gpu_temp':limit}),encoding='utf-8')
+seconds=60 if p=='quick' else int(os.environ.get('BURN_SECONDS','3600')) if p=='burn' else 600
+Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':8,'required':required,'max_gpu_temp':limit,
+    'result_contract':2,'run_id':uuid.uuid4().hex,'seconds':seconds,'matrix':8192,'start_epoch':time.time(),
+    'stress_memory_fraction':float(os.environ.get('MEMORY_FRACTION','0.65')),'nccl_iterations':50}),encoding='utf-8')
 PY
 cp -- "$ROOT/public_baselines.json" "$OUT/public-baselines.json"
 record() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$OUT/stages.tsv"; }
@@ -100,6 +104,7 @@ base=(docker run --rm --pull never --name "$container_name" --label "b300-kit.jo
       --ulimit memlock=-1 --ulimit stack=67108864
       -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1
       -e NCCL_DEBUG=INFO -e TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+      -e "B300_RUN_ID=$(python3 -c 'import json,os; from pathlib import Path; print(json.loads(Path(os.environ["OUT"],"plan.json").read_text())["run_id"])')"
       -v "$ROOT:/kit:ro" -v "$OUT:/out" "$image_id")
 stage() {
     local label="$1"; shift

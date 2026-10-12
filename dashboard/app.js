@@ -7,13 +7,13 @@ document.querySelectorAll("[id]").forEach((node) => { dom[node.id] = node; });
 const profileInfo = {
   identity: {title:"身份交叉检查", subtitle:"硬件身份 · 架构与驱动", category:"IDENTITY CHECK", icon:"◈", action:"开始身份检查", requires_gpus:0, requires_docker:false, requires_image:false, scope:["型号、UUID、PCI 与 VBIOS","满足条件时检查 CUDA 能力","显存与硬件身份一致性","逐卡异常与缺失证据"], description:"先采集主机身份，识别型号、架构和容量之间的不一致。仅在完整 8 卡与本地镜像可用时补充 CUDA 检查；缺失项目保留为未完成或需复核。", boundary:"结论是软件证据的一致性评估。驱动提供的名称、UUID 或序列号本身不能代替厂商认证；还应核对实物、采购记录与供应商信息。"},
   authenticity: {title:"真实性负载", subtitle:"服务器抽查 · 显存 · 计算 · 互联", category:"HARDWARE VALIDATION", icon:"⌘", action:"开始真实性负载", requires_gpus:8, requires_docker:true, requires_image:true, scope:["逐卡身份与 CUDA 能力检查","服务器清单与 CPU / RAM / 结果盘抽查","显存容量与数据正确性压力","实际计算与 NCCL 互联负载","ECC、Xid、温度与原始日志"], description:"对整台 8×B300 服务器运行真实硬件负载，补充 CPU、RAM 与结果盘的小样本正确性检查，并采集存储、NIC、NUMA 与 BMC 清单。此项目无需大模型权重。", boundary:"服务器抽查默认只覆盖 256 MiB RAM 与 128 MiB 结果盘文件。全 RAM、全盘、NIC 远端线速和 OEM 人工验收仍需另行完成；本次通过仅适用于实际已执行的范围。"},
-  quick: {title:"快速功能", subtitle:"短压力 · Qwen · SDXL", category:"FUNCTIONAL SMOKE TEST", icon:"ϟ", action:"开始快速功能", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["短时计算与显存压力","PyTorch NCCL 通信","Qwen3-0.6B 每卡独立推理","SDXL 图像生成"], description:"在完整基础离线包上运行短时功能检查，确认计算、通信与模型推理可以工作，再安排完整验收。", boundary:"此处 Qwen 为每张卡独立副本，模型与精度不同，吞吐不能直接与 DeepSeek-R1 MLPerf 整机公测比较。"},
+  quick: {title:"快速功能", subtitle:"短压力 · Qwen · SDXL", category:"FUNCTIONAL SMOKE TEST", icon:"ϟ", action:"开始快速功能", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["短时计算与显存压力","PyTorch NCCL 通信","Qwen3-0.6B 每卡独立推理","SDXL 图像生成"], description:"在完整基础离线包上运行短时功能检查，确认计算、通信与模型推理可以工作，再安排完整功能测试。", boundary:"此处 Qwen 为每张卡独立副本，模型与精度不同，吞吐不能直接与 DeepSeek-R1 MLPerf 整机公测比较。"},
   compare: {title:"NCCL 公测对比", subtitle:"8 卡整机 · 相同测试条件", category:"PUBLIC REFERENCE", icon:"⇄", action:"开始 NCCL 对比", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["8 张物理 B300 与环境检查","固定 nccl-tests 原始输出","8 GiB All-Reduce 对应条件","带宽、正确性与公测比例"], description:"运行与公开 8×B300 参考相对应的 NCCL 测试，保留原始输出与参数，比较整机通信能力。", boundary:"仅在卡数、数据大小、操作与数据类型等条件相符时比较。参考成绩是定位差异的依据，达不到某个比例本身不能证明是假卡。"},
-  full: {title:"完整验收", subtitle:"压力 · 公测 · 模型 · DCGM", category:"FULL ACCEPTANCE", icon:"▦", action:"开始完整验收", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["600 秒计算与显存压力","NCCL 通信与公测对比","两种 Qwen 及 SDXL 推理","DCGM、ECC 与内核错误复核"], description:"运行基础包的完整验收流程，覆盖硬件压力、通信、两种文本模型、图像模型与诊断，汇总为一份报告。", boundary:"full/burn 需要可用的 DCGM。缺失诊断项目时报告保留为未完成。此项目不自动运行独立的 DeepSeek MLPerf 扩展。"},
-  burn: {title:"持续压力", subtitle:"可选时长 · 完整验收后续", category:"SUSTAINED STRESS", icon:"◷", action:"开始持续压力", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["指定时长计算与显存压力","逐卡温度与功耗遥测","完整通信及模型功能测试","运行前后 ECC 与错误检查"], description:"延长压力阶段，观察整机供电、散热和稳定性；压力结束后继续执行完整验收的其他项目。", boundary:"所选时长仅指压力阶段，总运行时间还包含模型加载、通信和诊断。先通过短时检查，再运行较长负载。"},
+  full: {title:"完整功能测试", subtitle:"压力 · 公测 · 模型 · DCGM", category:"FULL FUNCTIONAL TEST", icon:"▦", action:"开始完整功能测试", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["600 秒计算与显存压力","NCCL 通信与公测对比","两种 Qwen 及 SDXL 推理","DCGM、ECC 与内核错误复核"], description:"运行基础包的全部功能项目，覆盖硬件压力、通信、两种文本模型、图像模型与诊断，汇总为一份技术报告。", boundary:"full/burn 需要可用的 DCGM。缺失诊断项目时报告保留为未完成。此项目不自动运行独立的 DeepSeek MLPerf 扩展，也不完成整机采购验收。"},
+  burn: {title:"持续压力", subtitle:"可选时长 · 完整功能测试后续", category:"SUSTAINED STRESS", icon:"◷", action:"开始持续压力", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["指定时长计算与显存压力","逐卡温度与功耗遥测","完整通信及模型功能测试","运行前后 ECC 与错误检查"], description:"延长压力阶段，观察整机供电、散热和稳定性；压力结束后继续执行完整功能测试的其他项目。", boundary:"所选时长仅指压力阶段，总运行时间还包含模型加载、通信和诊断。先通过短时检查，再运行较长负载。"},
   deepseek: {title:"DeepSeek MLPerf", subtitle:"R1 FP4 · v6.0 Offline", category:"MLPERF INFERENCE", icon:"◎", action:"开始 DeepSeek 测试", requires_gpus:8, requires_docker:true, requires_deepseek:true, scope:["官方固定源码、模型与数据校验","DeepSeek-R1 FP4 · TP8 / EP8","Offline 性能与准确率两阶段","8 卡整机 Tokens/s 公测对比"], description:"通过独立准备的官方运行环境，执行 DeepSeek-R1 的 MLPerf Inference v6.0 Offline 性能与准确率流程。完整负载耗时较长。", boundary:"必须提前完成独立资源和准确率缓存准备。参考为 8 卡整机 70,325.7 Tokens/s；本地测试结果不是 MLCommons 认证提交。"},
 };
-const stageLabels = {identity:"身份与架构检查", server:"服务器清单与 CPU / RAM / 结果盘抽查", "host-identity":"主机身份采集", "identity-host":"主机身份采集", "identity-cuda":"CUDA 身份检查", "identity-evaluation":"身份一致性评估", capacity:"显存容量与正确性", memory:"显存检查", environment:"GPU 运行环境", stress:"计算与显存压力", nccl:"PyTorch NCCL 通信", "nccl-public":"NCCL 公测对比", dcgm:"DCGM 诊断", preflight:"环境与资源预检", "llm-Qwen3-0.6B":"Qwen3-0.6B 推理", "llm-Qwen3-8B":"Qwen3-8B 推理", "image-SDXL-base-1.0":"SDXL 图像生成", "deepseek-r1-mlperf":"DeepSeek-R1 MLPerf", telemetry:"遥测采集", launcher:"测试启动与清理", report:"汇总报告", integrity:"资源完整性校验"};
+const stageLabels = {identity:"身份与架构检查", server:"服务器清单与 CPU / RAM / 结果盘抽查", "server-health-before":"压力前 SMART / BMC 健康", "server-health-after":"压力后 SMART / BMC 健康", "host-identity":"主机身份采集", "identity-host":"主机身份采集", "identity-cuda":"CUDA 身份检查", "identity-evaluation":"身份一致性评估", capacity:"显存容量与正确性", memory:"显存检查", environment:"GPU 运行环境", stress:"计算与显存压力", nccl:"PyTorch NCCL 通信", "nccl-public":"NCCL 公测对比", dcgm:"DCGM 诊断", preflight:"环境与资源预检", "llm-Qwen3-0.6B":"Qwen3-0.6B 推理", "llm-Qwen3-8B":"Qwen3-8B 推理", "image-SDXL-base-1.0":"SDXL 图像生成", "deepseek-r1-mlperf":"DeepSeek-R1 MLPerf", telemetry:"遥测采集", launcher:"测试启动与清理", report:"汇总报告", integrity:"资源完整性校验"};
 const statusLabels = {PASS:"通过",CONSISTENT:"信号一致",FAIL:"失败",REVIEW:"需复核",INCOMPLETE:"未完成",RUNNING:"运行中",PENDING:"待执行",STOPPED:"已停止",UNKNOWN:"待复核",SKIP:"已跳过"};
 let state = null;
 let csrfToken = null;
@@ -76,9 +76,48 @@ function activeJob() {
 }
 function profile(id) {
   const base = id === "import-image" ? {title:"导入离线镜像",requires_gpus:0,requires_docker:true} : profileInfo[id];
-  return {...base, ...(state?.profiles || []).find((item) => item.id === id), id};
+  const result = {...base, ...(state?.profiles || []).find((item) => item.id === id), id};
+  // Older controllers may still call the full profile "完整验收". Its scope is a
+  // technical test, so keep the reviewed wording while honoring eligibility.
+  if (["quick","full","burn"].includes(id)) {
+    for (const key of ["title","subtitle","category","action","description","boundary"]) result[key] = base[key];
+  }
+  return result;
 }
 function readiness() { return state?.readiness || {}; }
+const acceptanceStatement = "测试通过不等于采购验收完成。请勿仅依据 PASS 或身份信号一致判定整机验收通过或支付尾款。";
+const defaultAcceptanceChecks = [
+  {id:"bom",title:"采购 BOM 与每台实物、BMC 清单逐项比对",status:"PENDING"},
+  {id:"vendor",title:"厂家核验服务器及部件序列号、保修与来源",status:"PENDING"},
+  {id:"ram",title:"全 RAM 容量与稳定性测试",status:"PENDING"},
+  {id:"storage",title:"全部 SSD 健康、容量与读写验证",status:"PENDING"},
+  {id:"network",title:"所有 NIC 端口与远端链路线速验证",status:"PENDING"},
+  {id:"power",title:"供电、冗余与冷启动后的整机复测",status:"PENDING"},
+];
+function acceptanceFor(job) {
+  const value = job?.summary?.acceptance;
+  const blockers = Array.isArray(value?.blockers) ? value.blockers.filter((item) => typeof item === "string" && item).slice(0,30) : [];
+  if (jobStatus(job) === "FAIL" && !blockers.length) blockers.push("本次技术检查存在失败，需排查并保留原始证据。");
+  const blocked = value?.status === "BLOCKED" || blockers.length > 0;
+  const supplied = Array.isArray(value?.pending_checks) ? value.pending_checks.filter((item) => item && typeof item.title === "string" && item.title).slice(0,30).map((item) => ({...item,status:["FAIL","REVIEW"].includes(item.status) ? item.status : "PENDING"})) : [];
+  const checks = supplied.length ? supplied : defaultAcceptanceChecks;
+  return {status:blocked ? "BLOCKED" : "NOT_ACCEPTED", blockers, checks, statement:acceptanceStatement};
+}
+function renderAcceptance() {
+  const job = jobs().find((entry) => entry.id === selectedJobId) || activeJob() || jobs()[0] || null;
+  const acceptance = acceptanceFor(job);
+  const blocked = acceptance.status === "BLOCKED";
+  dom.acceptancePanel.classList.toggle("acceptance-blocked",blocked);
+  dom.acceptanceTitle.textContent = blocked ? "采购验收存在阻断项" : "采购验收尚未完成";
+  dom.acceptanceStatus.textContent = acceptance.status;
+  dom.acceptanceStatement.textContent = acceptance.statement;
+  dom.acceptanceContext.textContent = job ? `当前记录：${profile(job.profile).title || job.profile} · ${job.id}。下面是尚需补齐的验货证据，不会由技术 PASS 自动变为通过。` : "未提供采购 BOM、实物及厂商核验记录，也未完成全部整机测试。";
+  dom.acceptanceBlockers.hidden = !acceptance.blockers.length;
+  replace(dom.acceptanceBlockers,acceptance.blockers.map((detail) => node("p",null,detail)));
+  replace(dom.acceptanceChecks,acceptance.checks.map((check) => {
+    const row = node("div","acceptance-check");const label = badge(check.status,true);if (check.status === "PENDING") label.textContent = "待补证";row.append(label,node("span",null,check.title));return row;
+  }));
+}
 function gate(id, ignoreBusy = false) {
   const info = profile(id);
   if (!connected || !state) return {ok:false, reason:"尚未连接测试主机。"};
@@ -291,7 +330,7 @@ function renderJobHistory() {
     const top = node("div","job-option-title");
     top.append(node("span",null,profile(job.profile).title || job.profile),badge(jobStatus(job),true));
     button.append(top,node("div","job-option-date",dateLabel(job.started_at)),node("div","job-id",job.id));
-    button.addEventListener("click",() => { selectedJobId = job.id; selectionIsManual = true; renderJobHistory(); renderJobDetail(); renderWorkflow(); });
+    button.addEventListener("click",() => { selectedJobId = job.id; selectionIsManual = true; renderJobHistory(); renderJobDetail(); renderWorkflow(); renderAcceptance(); });
     return button;
   }));
 }
@@ -435,12 +474,16 @@ function renderJobDetail() {
   dom.jobTitle.textContent = profile(job.profile).title || job.profile;
   dom.jobMeta.textContent = `${job.id} · 开始 ${dateLabel(job.started_at,true)}${job.ended_at ? ` · 结束 ${dateLabel(job.ended_at,true)}` : ""}`;
   const status = jobStatus(job);
-  const overview = node("div","job-overview");overview.append(badge(status));
-  const message = status === "RUNNING" ? "正在执行实际负载，请保持主机与服务在线。" : status === "PASS" ? "本次已要求的检查通过；请复核报告中的范围与限制。" : status === "CONSISTENT" ? "本次采集的身份信号一致；厂商与实物核验需另行完成。" : status === "FAIL" ? "存在失败或异常，请检查原始日志与报告。" : status === "STOPPED" ? "任务已停止，已采集的证据仍可复核。" : "运行证据需要复核，未完成项目不能作为通过。";
+  const overview = node("div","job-overview");overview.append(node("span","job-status-label","本次技术检查"),badge(status));
+  const message = status === "RUNNING" ? "正在执行实际负载，请保持主机与服务在线。" : status === "PASS" ? "本次已要求的技术检查通过；请复核实际测试范围。采购验收仍未完成。" : status === "CONSISTENT" ? "本次采集的身份信号一致；采购验收仍未完成，厂商与实物核验需另行完成。" : status === "FAIL" ? "存在失败或异常，请检查原始日志与报告。" : status === "STOPPED" ? "任务已停止，已采集的证据仍可复核。" : "运行证据需要复核，未完成项目不能作为通过。";
   overview.append(node("p",null,message));
   const stages = stagesFor(job);
   const finished = stages.filter((stage) => !["RUNNING","PENDING","UNKNOWN"].includes(rawStatus(stage.status))).length;
   if (stages.length) overview.append(node("span","job-progress",`${finished} / ${stages.length} 已记录阶段结束`));
+  const acceptance = acceptanceFor(job);
+  const purchase = node("div",`job-acceptance-note${acceptance.status === "BLOCKED" ? " blocked" : ""}`);
+  purchase.append(node("strong",null,acceptance.status === "BLOCKED" ? "采购验收：存在阻断项" : "采购验收：尚未完成"),node("span",null,acceptance.statement));
+  overview.append(purchase);
   replace(dom.jobOverview,[overview]);
   const log = Array.isArray(job.log_tail) ? job.log_tail.join("\n") : String(job.log_tail || "尚无输出。等待实际运行日志。");
   const atBottom = dom.logOutput.scrollHeight - dom.logOutput.scrollTop - dom.logOutput.clientHeight < 40;
@@ -458,7 +501,7 @@ function render() {
   dom.connectionStatus.classList.toggle("connected",connected);
   dom.connectionStatus.classList.toggle("disconnected",!connected);
   dom.connectionStatus.lastElementChild.textContent = connected ? "主机已连接" : "主机未连接";
-  selectAutomaticJob();renderHardware();renderReadiness();renderProfiles();renderSelected();renderJobHistory();renderJobDetail();renderWorkflow();
+  selectAutomaticJob();renderHardware();renderReadiness();renderProfiles();renderSelected();renderJobHistory();renderJobDetail();renderWorkflow();renderAcceptance();
 }
 async function refresh(force = false) {
   if (refreshing) return;

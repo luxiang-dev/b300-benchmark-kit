@@ -186,6 +186,7 @@ def run_probe(torch, dist, rank, args, evidence):
                     reserve_bytes=RESERVE_BYTES, scratch_bytes=CHUNK_BYTES,
                     chunk_bytes=CHUNK_BYTES, target_allocation_bytes=allocated,
                     allocated_bytes=0, verified_bytes_per_pass=0,
+                    cpu_reference_positions_per_chunk=3, cpu_reference_checks_per_pass=count * 3,
                     total_verified_bytes=0, coverage_percent=0.0, passes=[],
                     free_memory_limited=allocated < int(total * args.memory_fraction) // CHUNK_BYTES * CHUNK_BYTES,
                     note="Only simultaneously allocated HBM is verified. Repeated passes do not increase capacity coverage; this is not an authenticity certificate.")
@@ -203,6 +204,7 @@ def run_probe(torch, dist, rank, args, evidence):
         for pattern in PATTERNS:
             guard.check(force=True)
             phase = dict(pattern=pattern, written_bytes=0, verified_bytes=0)
+            phase['cpu_reference_checks'] = 0
             evidence["passes"].append(phase)
             t0 = time.perf_counter()
             for index, block in enumerate(blocks):
@@ -221,6 +223,15 @@ def run_probe(torch, dist, rank, args, evidence):
                 _fill_expected(torch, scratch, rank, index, pattern)
                 if not torch.equal(block, scratch):
                     raise RuntimeError(f"HBM write/read mismatch: {pattern}, chunk {index}, rank {rank}")
+                # Independent CPU arithmetic at three actual HBM addresses per
+                # chunk catches a faulty GPU pattern producer/comparator. This
+                # is a spot check, not CPU verification of every HBM byte.
+                positions = [0, block.numel() // 2, block.numel() - 1]
+                observed = block[torch.tensor(positions, device=block.device, dtype=torch.int64)].cpu().tolist()
+                expected_cpu = [pattern_word(position, rank, index, pattern) for position in positions]
+                if observed != expected_cpu:
+                    raise RuntimeError(f'HBM independent CPU reference mismatch: {pattern}, chunk {index}, rank {rank}')
+                phase['cpu_reference_checks'] += len(positions)
                 phase["verified_bytes"] += CHUNK_BYTES
                 evidence["total_verified_bytes"] += CHUNK_BYTES
             torch.cuda.synchronize()
@@ -245,7 +256,9 @@ def main(argv=None):
     try:
         torch, dist, rank, _world = gpu_test.setup(args)
         run_probe(torch, dist, rank, args, evidence)
-        gpu_test.emit(args, dict(evidence, status="PASS"))
+        emitted = gpu_test.emit(args, dict(evidence, status="PASS"))
+        if emitted['status'] != 'PASS':
+            raise RuntimeError(emitted.get('error', 'GPU evidence binding failed'))
         dist.destroy_process_group()
         return 0
     except Exception as exc:

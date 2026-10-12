@@ -3,6 +3,7 @@
 import argparse
 from datetime import timedelta
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -18,9 +19,31 @@ def emit(args, result):
     result.update(test=args.mode, rank=rank, model=args.model, time_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     path = Path(args.out)
     path.mkdir(parents=True, exist_ok=True)
+    try:
+        import authenticity
+        from evidence import digest
+        import torch
+        props = torch.cuda.get_device_properties(rank)
+        identity = authenticity.cuda_driver_identity()
+        uuid = identity.get('uuid') or authenticity.normalize_uuid(getattr(props, 'uuid', None))
+        if not uuid or not identity.get('pci_bus_id'):
+            raise RuntimeError('Cannot bind result to current CUDA UUID/PCI address')
+        result.update(schema_version=2, run_id=os.environ.get('B300_RUN_ID'), uuid=uuid,
+                      pci_bus_id=identity['pci_bus_id'], capability=list(torch.cuda.get_device_capability(rank)),
+                      world_size=int(os.environ.get('WORLD_SIZE', '1')),
+                      hardware_snapshot_sha256=digest(path / 'before.xml'))
+        result.setdefault('total_memory_bytes', int(props.total_memory))
+        if (path / 'identity-host.json').is_file():
+            result['identity_host_sha256'] = digest(path / 'identity-host.json')
+        if not result['run_id']:
+            raise RuntimeError('Missing B300_RUN_ID for this test run')
+    except Exception as error:
+        if result.get('status') == 'PASS':
+            result.update(status='FAIL', error='GPU result binding failed: ' + str(error))
     suffix = "-" + Path(args.model).name if args.model else ""
-    (path / f"{args.mode}{suffix}-gpu{rank}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (path / f"{args.mode}{suffix}-gpu{rank}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False), flush=True)
+    return result
 
 
 def setup(args):
@@ -41,7 +64,10 @@ def setup(args):
 def temperature(rank):
     result = subprocess.run(["nvidia-smi", "-i", str(rank), "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
                             capture_output=True, text=True, timeout=10, check=True)
-    return float(result.stdout.strip())
+    value = float(result.stdout.strip())
+    if not math.isfinite(value) or not 0 < value < 120:
+        raise RuntimeError('Invalid GPU temperature reading')
+    return value
 
 
 def environment(torch, dist, rank, world, args):
@@ -54,7 +80,7 @@ def environment(torch, dist, rank, world, args):
     dist.barrier()
     return dict(status="PASS", gpu=props.name, memory_gib=props.total_memory / 2**30,
                 capability=list(torch.cuda.get_device_capability(rank)), torch=torch.__version__,
-                cuda=torch.version.cuda, nccl=list(torch.cuda.nccl.version()), world_size=world)
+                cuda=torch.version.cuda, nccl=list(torch.cuda.nccl.version()), world_size=world, bf16_correctness=True)
 
 
 def stress(torch, dist, rank, world, args):
@@ -83,6 +109,8 @@ def stress(torch, dist, rank, world, args):
     gemm_seconds = 0.0
     iterations = 0
     peak_temp = temperature(rank)
+    if peak_temp >= args.max_temp:
+        raise RuntimeError(f'Temperature reached stop threshold {args.max_temp} C')
     while time.perf_counter() - start < args.seconds:
         t0 = time.perf_counter()
         for _ in range(20):
@@ -114,7 +142,7 @@ def stress(torch, dist, rank, world, args):
     peak_temp = max(peak_temp, temperature(rank))
     if peak_temp >= args.max_temp:
         raise RuntimeError(f"Temperature reached stop threshold {args.max_temp} C")
-    return dict(status="PASS", duration_s=time.perf_counter() - start, matrix=n, dtype="BF16",
+    return dict(status="PASS", duration_s=time.perf_counter() - start, requested_seconds=args.seconds, matrix=n, dtype="BF16",
                 memory_tested_gib=chunk_count * 0.25, gemm_iterations=iterations,
                 gemm_tflops=2 * n ** 3 * iterations / gemm_seconds / 1e12,
                 peak_temperature_c=peak_temp, memory_patterns=[17, -31],
@@ -156,7 +184,7 @@ def nccl(torch, dist, rank, world, args):
         rows.append(dict(size_mib=mib, latency_ms=seconds * 1000,
                          algorithm_gbps=alg, bus_gbps=alg * 2 * (world - 1) / world,
                          operation="MAX", sum_correctness="PASS"))
-    return dict(status="PASS", world_size=world, measurements=rows,
+    return dict(status="PASS", world_size=world, iterations=args.iterations, measurements=rows,
                 note="PyTorch NCCL all-reduce; reported bus bandwidth uses 2*(N-1)/N. Not nccl-tests or proof of NVLink routing.")
 
 
@@ -263,6 +291,8 @@ def main():
         torch, dist, rank, world = setup(args)
         result = globals()[args.mode](torch, dist, rank, world, args)
         emit(args, result)
+        if result['status'] != 'PASS':
+            raise RuntimeError(result.get('error', 'GPU evidence binding failed'))
         dist.destroy_process_group()
         return 0
     except Exception as exc:

@@ -1935,3 +1935,131 @@ main{
 .mode-review{
   color:var(--amber)
 }
+.acceptance-panel{
+  margin-bottom:22px;
+  padding:20px 22px;
+  border:1px solid #675337;
+  border-radius:var(--radius);
+  background:linear-gradient(115deg,#29251e,#181e2c)
+}
+.acceptance-heading{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:15px
+}
+.acceptance-eyebrow{
+  display:block;
+  color:var(--amber);
+  font-size:10px;
+  letter-spacing:.8px;
+  margin-bottom:5px
+}
+.acceptance-heading h2{
+  font-size:20px;
+  color:#f1d4a5
+}
+.acceptance-badge{
+  padding:5px 9px;
+  color:var(--amber);
+  border:1px solid #705b3e;
+  border-radius:5px;
+  font-size:10px;
+  font-weight:650;
+  white-space:nowrap
+}
+.acceptance-statement{
+  margin-top:12px;
+  color:#efdfc8;
+  font-size:12px;
+  line-height:1.8
+}
+.acceptance-context{
+  margin-top:5px;
+  color:var(--muted);
+  font-size:10px;
+  overflow-wrap:anywhere
+}
+.acceptance-checks{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:9px 20px;
+  margin-top:16px;
+  padding-top:15px;
+  border-top:1px solid #514431
+}
+.acceptance-check{
+  display:flex;
+  align-items:flex-start;
+  gap:9px;
+  font-size:11px;
+  color:#c7cbd4
+}
+.acceptance-check .status-badge{
+  flex-shrink:0;
+  margin-top:1px
+}
+.acceptance-blockers{
+  margin-top:13px;
+  padding:10px 13px;
+  border-left:2px solid var(--red);
+  background:#38232a;
+  font-size:11px;
+  color:#efb5bb
+}
+.acceptance-blockers p+p{
+  margin-top:6px
+}
+.acceptance-blocked{
+  border-color:#77404b
+}
+.acceptance-blocked .acceptance-heading h2,.acceptance-blocked .acceptance-badge{
+  color:var(--red)
+}
+.acceptance-blocked .acceptance-badge{
+  border-color:#77404b
+}
+.job-overview{
+  flex-wrap:wrap
+}
+.job-status-label{
+  font-size:10px;
+  color:var(--muted)
+}
+.job-acceptance-note{
+  flex-basis:100%;
+  display:grid;
+  gap:3px;
+  padding:10px 12px;
+  background:#2a261e;
+  border:1px solid #5b4b34;
+  border-radius:6px;
+  font-size:10px;
+  color:#d7c7aa
+}
+.job-acceptance-note strong{
+  font-weight:550;
+  color:var(--amber)
+}
+.job-acceptance-note.blocked{
+  background:#30212a;
+  border-color:#663846
+}
+.job-acceptance-note.blocked strong{
+  color:var(--red)
+}
+@media(max-width:760px){
+  .acceptance-panel{
+    padding:17px
+  }
+  .acceptance-heading{
+    align-items:flex-start;
+    flex-wrap:wrap
+  }
+  .acceptance-heading h2{
+    font-size:18px
+  }
+  .acceptance-checks{
+    grid-template-columns:minmax(0,1fr)
+  }
+}

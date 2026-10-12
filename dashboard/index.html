@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="离线 B300 身份交叉检查、压力测试、公测对比与证据导出工作台。">
-  <title>B300 验真工作台</title>
+  <meta name="description" content="B300 采购验货证据工作台：身份核验、技术测试与人工采购验收状态分别展示。">
+  <title>B300 采购验货工作台</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -45,14 +45,22 @@
         <div class="alert" id="actionMessage" role="status" hidden></div>
 
         <section class="overview" id="overview" aria-labelledby="pageTitle">
-          <div class="page-heading"><div><div class="eyebrow"><span></span> HARDWARE ACCEPTANCE</div><h1 id="pageTitle">B300 验真与性能验收</h1><p>从身份一致性到真实负载，每一项结论都保留可复核证据。</p></div><a class="button button-secondary guide-shortcut" href="#guide">开始前的准备 <span aria-hidden="true">↗</span></a></div>
+          <div class="page-heading"><div><div class="eyebrow"><span></span> HARDWARE VERIFICATION</div><h1 id="pageTitle">B300 采购验货工作台</h1><p>核对身份、执行负载、保留证据；技术测试结果与采购验收分别显示。</p></div><a class="button button-secondary guide-shortcut" href="#guide">开始前的准备 <span aria-hidden="true">↗</span></a></div>
 
           <div class="metrics-grid">
             <div class="metric"><span class="metric-label">识别到的 GPU</span><div class="metric-value"><span id="gpuCount">—</span><span class="metric-unit">张</span></div><span class="metric-note" id="gpuCountNote">等待 nvidia-smi 数据</span></div>
             <div class="metric"><span class="metric-label">HBM 总容量</span><div class="metric-value"><span id="totalMemory">—</span><span class="metric-unit">GiB</span></div><span class="metric-note">驱动报告值 · 非实测可用容量</span></div>
             <div class="metric"><span class="metric-label">测试运行</span><div class="metric-value"><span id="runCount">0</span><span class="metric-unit">次</span></div><span class="metric-note" id="runCountNote">尚未开始测试</span></div>
-            <div class="metric metric-accent"><span class="metric-label">当前状态</span><div class="metric-value metric-text" id="runStatus">待检查</div><span class="metric-note" id="runStatusNote">先完成主机准备与身份检查</span></div>
+            <div class="metric metric-accent"><span class="metric-label">技术检查状态</span><div class="metric-value metric-text" id="runStatus">待检查</div><span class="metric-note" id="runStatusNote">先完成主机准备与身份检查</span></div>
           </div>
+
+          <section class="acceptance-panel" id="acceptancePanel" aria-labelledby="acceptanceTitle">
+            <div class="acceptance-heading"><div><span class="acceptance-eyebrow">采购验收 · 独立于技术 PASS</span><h2 id="acceptanceTitle">采购验收尚未完成</h2></div><span class="acceptance-badge" id="acceptanceStatus">NOT_ACCEPTED</span></div>
+            <p class="acceptance-statement" id="acceptanceStatement">测试通过不等于采购验收完成。请勿仅依据 PASS 或身份信号一致判定整机验收通过或支付尾款。</p>
+            <p class="acceptance-context" id="acceptanceContext">未提供采购 BOM、实物及厂商核验记录，也未完成全部整机测试。</p>
+            <div class="acceptance-blockers" id="acceptanceBlockers" hidden></div>
+            <div class="acceptance-checks" id="acceptanceChecks"></div>
+          </section>
 
           <div class="overview-grid">
             <section class="panel hardware-panel" aria-labelledby="hardwareTitle"><div class="panel-heading"><h2 id="hardwareTitle"><span class="heading-symbol">◈</span>设备清单</h2><span class="small-tag" id="hardwareTag">实时读取</span></div><div class="gpu-grid" id="gpuGrid"><div class="empty-state"><span class="empty-symbol">◈</span><strong>等待设备信息</strong><p>连接测试主机后显示型号、UUID 和显存。</p></div></div><div class="panel-footnote">型号文字仅是身份检查的一个信号。请继续交叉检查 PCI、架构、显存与真实计算。</div></section>
@@ -61,7 +69,7 @@
         </section>
 
         <section class="workflow-section" id="workflow" aria-labelledby="workflowTitle">
-          <div class="section-heading"><div><div class="eyebrow">01 — WORKFLOW</div><h2 id="workflowTitle">从检查到验收</h2></div><span class="section-note">建议按顺序执行 · 同时只运行一个任务</span></div>
+          <div class="section-heading"><div><div class="eyebrow">01 — WORKFLOW</div><h2 id="workflowTitle">技术检查流程</h2></div><span class="section-note">建议按顺序执行 · 同时只运行一个任务</span></div>
           <div class="workflow-steps" id="workflowSteps" aria-label="测试流程状态"></div>
           <div class="testing-grid">
             <section class="panel test-picker" aria-labelledby="pickerTitle"><div class="panel-heading"><h3 id="pickerTitle">选择测试项目</h3><span class="small-tag">7 个项目</span></div><div class="profile-list" id="profileList"></div></section>
@@ -92,9 +100,9 @@ docker info</code><button class="copy-code" aria-label="复制主机检查命令
             <details class="guide-item"><summary><span class="guide-number">2</span><div>提前准备离线资源<small>下载、构建与校验在有网 Linux 上完成</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>身份与硬件验真不需要大模型权重。先在 CPU 架构相同的有网 Linux 主机准备硬件测试镜像，再复制整个准备包到目标服务器本地 SSD。</p><div class="code-block"><code>bash prepare_offline.sh --hardware-only
 python3 bundle.py verify --hardware-only</code><button class="copy-code" aria-label="复制离线准备命令">复制</button></div><p>在工作台点击“导入离线镜像”，程序先校验归档再导入。Qwen / SDXL 功能测试需要完整基础包，准备时去掉 <code>--hardware-only</code>。</p><p>DeepSeek 单独准备固定官方源码、FP4 权重、数据、准确率环境与镜像，并设置 <code>MLPERF_REPO</code>、<code>MLPERF_SCRATCH_PATH</code>、<code>MLPERF_IMAGE</code>。详见项目里的 <code>README_DeepSeek_MLPerf.md</code>。</p><p class="guide-tip">本页面不会自动下载大模型或拉取镜像。准备不完整时先处理“运行条件”提醒。</p></div></details>
             <details class="guide-item"><summary><span class="guide-number">3</span><div>启动可视化工作台<small>服务仅监听测试主机本地地址</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>在 Ubuntu 项目目录启动服务。保留终端运行，然后在 Ubuntu 浏览器打开 <code>http://127.0.0.1:8765</code>。</p><div class="code-block"><code id="serverCommand">python3 dashboard.py --port 8765 --image b300-test:1.0</code><button class="copy-code" aria-label="复制工作台启动命令">复制</button></div><p>从 Windows 操作时，在 PowerShell 新开 SSH 隧道，把下方用户名与服务器地址替换成实际值，再在 Windows 浏览器打开相同地址。</p><div class="code-block"><code>ssh -N -L 8765:127.0.0.1:8765 用户名@Ubuntu服务器IP</code><button class="copy-code" aria-label="复制 SSH 隧道命令">复制</button></div><p class="guide-tip">不要关闭服务终端或 SSH 隧道。结束负载时先点击“停止任务”，等待清理完成。</p></div></details>
-            <details class="guide-item"><summary><span class="guide-number">4</span><div>逐层检查真实性与稳定性<small>先检查身份，再执行真实负载</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><ol><li>先运行“身份交叉检查”，复核硬件与驱动提供的多个身份信号。</li><li>运行“真实性负载”，采集服务器清单，抽查 CPU、256 MiB RAM 与 128 MiB 结果盘文件，再验证 GPU 显存、计算与互联；观察每张卡的遥测及错误。</li><li>8 卡整机继续执行“NCCL 公测对比”，检查互联性能与参考数据的测试条件。</li><li>运行“快速功能”或“完整验收”；需要长压力时再运行“持续压力”。</li><li>准备独立资源后可执行 DeepSeek-R1 MLPerf v6.0 Offline，读取性能与准确率两份证据。</li></ol><p class="guide-tip">运行期间保持主机空闲，观察温度、功耗与原始日志。全 RAM、全盘、NIC 远端线速和 OEM 人工验收需另行完成。出现异常时停止，保存日志并排查供电、散热、驱动和硬件。</p></div></details>
+            <details class="guide-item"><summary><span class="guide-number">4</span><div>逐层检查身份与稳定性<small>先检查身份，再执行真实负载</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><ol><li>先运行“身份交叉检查”，复核硬件与驱动提供的多个身份信号。</li><li>运行“真实性负载”，采集服务器清单，抽查 CPU、256 MiB RAM 与 128 MiB 结果盘文件，再验证 GPU 显存、计算与互联；观察每张卡的遥测及错误。</li><li>8 卡整机继续执行“NCCL 公测对比”，检查互联性能与参考数据的测试条件。</li><li>运行“快速功能”或“完整功能测试”；需要长压力时再运行“持续压力”。</li><li>准备独立资源后可执行 DeepSeek-R1 MLPerf v6.0 Offline，读取性能与准确率两份证据。</li></ol><p class="guide-tip">运行期间保持主机空闲，观察温度、功耗与原始日志。全 RAM、全盘、NIC 远端线速和 OEM 人工验收需另行完成。出现异常时停止，保存日志并排查供电、散热、驱动和硬件。</p></div></details>
             <details class="guide-item"><summary><span class="guide-number">5</span><div>复核结论并保留证据<small>报告、原始日志与校验清单一起保存</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>在“运行与证据”选择本次任务。检查全部阶段、遥测覆盖、ECC/Xid 与报告说明；下载报告、原始文件及证据归档。身份一致性与负载通过可提供较强的软件证据。继续向厂商或供应商核验序列号、部件编号与采购记录，并保留卡/服务器铭牌照片、BMC 清单和厂家回复。将实物信息与本次采集证据逐项对照。</p><div class="status-guide"><span class="status-badge status-pass">PASS</span><span>本次要求的检查通过</span><span class="status-badge status-fail">FAIL</span><span>有失败或明确异常</span><span class="status-badge status-review">REVIEW</span><span>需要人工复核证据</span><span class="status-badge status-incomplete">INCOMPLETE</span><span>未完成全部要求</span></div></div></details>
-          </div><aside class="panel interpretation-panel"><span class="interpretation-icon" aria-hidden="true">◎</span><h3>正确理解测试结论</h3><p>软件检查可以交叉验证身份、架构特征、显存与实际性能，不能代替厂商认证或实物检查。</p><div class="interpretation-divider"></div><h4>公测对比看条件</h4><p>8×B300 的整机结果应使用相同卡数、场景、模型与精度。单卡结果不能直接与 8 卡 MLPerf 或 NCCL 公测比较。</p><h4>只记录实际结果</h4><p>未执行的项目保持待测试；缺失证据不会显示为通过。演示页面始终明确标注。</p><div class="interpretation-footer">软件证据 + 负载验证 + 实物核验</div></aside></div>
+          </div><aside class="panel interpretation-panel"><span class="interpretation-icon" aria-hidden="true">◎</span><h3>技术通过 ≠ 采购验收完成</h3><p>软件检查可以交叉验证身份、架构特征、显存与实际性能，不能代替采购 BOM 比对、厂商认证或实物检查。工作台不会自动给出“采购验收通过”。</p><div class="interpretation-divider"></div><h4>公测对比看条件</h4><p>8×B300 的整机结果应使用相同卡数、场景、模型与精度。单卡结果不能直接与 8 卡 MLPerf 或 NCCL 公测比较。</p><h4>只记录实际结果</h4><p>未执行的项目保持待测试；缺失证据不会显示为通过。演示页面始终明确标注。</p><div class="interpretation-footer">软件证据 + 全机测试 + 实物及厂商核验</div></aside></div>
         </section>
         <footer class="page-footer"><span>B300 验真工作台</span><span>离线运行 · 全过程日志 · 可复核结果</span></footer>
       </main>

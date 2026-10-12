@@ -6,6 +6,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 : "${MLPERF_IMAGE:?Set MLPERF_IMAGE to the locally prepared DeepSeek MLPerf image ID/tag}"
 : "${MLPERF_SCRATCH_PATH:?Set MLPERF_SCRATCH_PATH to the prepared model/data scratch directory}"
 for c in python3 docker nvidia-smi; do command -v "$c" >/dev/null || { echo "Missing $c" >&2; exit 1; }; done
+if [[ -z "${B300_GPU_LOCK_FD:-}" ]]; then exec python3 "$ROOT/job_lock.py" -- bash "$ROOT/run_deepseek_mlperf.sh" "$@"; fi
 REPO="$(cd -- "$MLPERF_REPO" && pwd)"
 SCRATCH="$(cd -- "$MLPERF_SCRATCH_PATH" && pwd)"
 # Upstream Makefiles expand these paths as shell words.

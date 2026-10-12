@@ -23,6 +23,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from evidence import export_evidence
 from telemetry_guard import validate_sample
+import job_lock
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = [
@@ -31,7 +32,7 @@ PROFILES = [
     dict(id='authenticity', title='整机硬件验真与稳定性', description='身份、服务器抽查、约85%HBM、10分钟计算、8卡通信、公测、DCGM。', requires_gpus=8, requires_docker=True, requires_image=True),
     dict(id='quick', title='模型功能快检', description='计算、NCCL、Qwen 0.6B 和 SDXL。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
     dict(id='compare', title='8卡 NCCL 公测对比', description='环境检查及与 Oracle 固定口径一致的 all-reduce。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
-    dict(id='full', title='完整模型与诊断', description='10分钟压力、通信、两个Qwen、SDXL、DCGM。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
+    dict(id='full', title='完整功能测试', description='10分钟压力、通信、两个Qwen、SDXL、DCGM；采购验收另行完成。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
     dict(id='burn', title='长时间稳定性', description='默认1小时压力，再执行完整模型及诊断。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
     dict(id='deepseek', title='DeepSeek-R1 / MLPerf', description='独立官方环境的完整 Offline 性能与准确率；需要数小时。', requires_gpus=8, requires_docker=True, requires_deepseek=True),
 ]
@@ -198,15 +199,7 @@ class JobManager:
             if not eligibility['available']:
                 raise ValueError(eligibility['unavailable_reason'])
             if profile != 'import-image':
-                import fcntl
-                lock_path = Path(tempfile.gettempdir()) / f'b300-kit-gpu-{os.getuid()}.lock'
-                descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-                try:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except OSError:
-                    os.close(descriptor)
-                    raise RuntimeError('该用户已有 B300 作业或另一个控制器正在使用 GPU。')
-                self.gpu_lock = descriptor
+                self.gpu_lock = job_lock.acquire()
             job_id = time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
             out = self.root / job_id
             try:
@@ -229,11 +222,19 @@ class JobManager:
             return job_id
 
     def _cleanup_containers(self, job_id):
+        if not shutil.which('docker'):
+            return
         listed = run_capture(['docker', 'ps', '-q', '--filter', 'label=b300-kit.job=' + job_id])
-        if listed:
-            ids = [line for line in listed.splitlines() if re.fullmatch(r'[0-9a-f]{12,64}', line)]
-            if ids:
-                run_capture(['docker', 'stop', '--time', '10', *ids], timeout=25)
+        if listed is None:
+            raise RuntimeError('无法核对本次作业的 Docker 容器，停止状态需要人工确认。')
+        ids = [line.strip() for line in listed.splitlines() if line.strip()]
+        if any(not re.fullmatch(r'[0-9a-f]{12,64}', line) for line in ids):
+            raise RuntimeError('本次作业容器清单无法解析，不能确认清理完成。')
+        if ids:
+            stopped = run_capture(['docker', 'stop', '--time', '10', *ids], timeout=25)
+            remaining = run_capture(['docker', 'ps', '-q', '--filter', 'label=b300-kit.job=' + job_id])
+            if stopped is None or remaining is None or remaining.strip():
+                raise RuntimeError('本次作业容器未确认停止；检查 Docker 与 GPU 进程后再测试。')
 
     def stop(self, job_id, thermal_reason=None):
         with self.lock:
@@ -247,16 +248,32 @@ class JobManager:
             job.update(status='STOPPING', cancelled=thermal_reason is None, thermal_stop=thermal_reason is not None)
             if thermal_reason:
                 job['error'] = thermal_reason
-            write_json(self.root / job_id / 'job.json', job)
             process = self.process
         if process and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+            except OSError as error:
+                with self.lock:
+                    job['cleanup_error'] = '无法通知启动器停止: ' + str(error)
             threading.Thread(target=self._finish_stop, args=(job_id, process), daemon=True).start()
+        # Dispatch both process and Docker cleanup before any result-disk I/O.
+        # A full or hung filesystem must not prevent a temperature stop.
+        with self.lock:
+            try:
+                write_json(self.root / job_id / 'job.json', job)
+            except OSError as error:
+                job['error'] = (job.get('error', '') + '; 无法保存停止状态: ' + str(error)).strip('; ')
 
     def _finish_stop(self, job_id, process):
+        try:
+            # A stopped launcher may be blocked collecting diagnostics. Stop
+            # owned GPU containers promptly rather than waiting 45 seconds.
+            self._cleanup_containers(job_id)
+        except Exception as error:
+            with self.lock:
+                self.jobs[job_id]['cleanup_error'] = str(error)
         try:
             process.wait(timeout=45)
         except subprocess.TimeoutExpired:
@@ -265,7 +282,18 @@ class JobManager:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-        self._cleanup_containers(job_id)
+                except OSError as error:
+                    with self.lock:
+                        self.jobs[job_id]['cleanup_error'] = '启动器强制停止失败: ' + str(error)
+        except Exception as error:
+            with self.lock:
+                self.jobs[job_id]['cleanup_error'] = '启动器退出状态无法确认: ' + str(error)
+        finally:
+            try:
+                self._cleanup_containers(job_id)
+            except Exception as error:
+                with self.lock:
+                    self.jobs[job_id]['cleanup_error'] = str(error)
 
     def _watch(self, job_id, done):
         while not done.wait(2):
@@ -299,9 +327,12 @@ class JobManager:
         job = self.jobs[job_id]
         done = threading.Event()
         watcher = None
+        cleanup_completed = False
         try:
             environment = {**os.environ, 'B300_JOB_ID': job_id, 'BURN_SECONDS': str(job['seconds']),
                            'MAX_GPU_TEMP': str(self.max_temp), 'PYTHONUNBUFFERED': '1'}
+            if self.gpu_lock is not None:
+                environment['B300_GPU_LOCK_FD'] = str(self.gpu_lock)
             commands = [self.command(job['profile'], out, job['seconds'])]
             if job['profile'] == 'import-image':
                 commands.append(['docker', 'load', '-i', str(ROOT / 'images/b300-test.tar')])
@@ -325,20 +356,24 @@ class JobManager:
             if watcher:
                 watcher.join(timeout=12)
             self._cleanup_containers(job_id)
+            cleanup_completed = True
             summary = optional_json(out / 'summary.json')
-            if job['cancelled']:
-                status = 'CANCELLED'
-            elif job['thermal_stop']:
-                status = 'FAIL'
-            elif summary:
-                status = summary.get('overall', 'FAIL')
-                if (status == 'PASS' and rc != 0) or (status in ('REVIEW', 'INCOMPLETE') and rc not in (0, 2)):
-                    status = 'FAIL'
-                    job['error'] = f'启动器异常退出 ({rc})；不能仅依赖摘要中的通过状态。'
-            else:
-                status = 'PASS' if job['profile'] == 'import-image' and rc == 0 else 'FAIL'
             completed_at = utc_now()
             with self.lock:
+                # Freeze cancellation and final status in one critical section.
+                # A stop between status selection and EXPORTING cannot be
+                # overwritten by a stale PASS decision.
+                if job['cancelled']:
+                    status = 'CANCELLED'
+                elif job['thermal_stop']:
+                    status = 'FAIL'
+                elif summary:
+                    status = summary.get('overall', 'FAIL')
+                    if (status == 'PASS' and rc != 0) or (status in ('REVIEW', 'INCOMPLETE') and rc not in (0, 2)):
+                        status = 'FAIL'
+                        job['error'] = f'启动器异常退出 ({rc})；不能仅依赖摘要中的通过状态。'
+                else:
+                    status = 'PASS' if job['profile'] == 'import-image' and rc == 0 else 'FAIL'
                 job.update(status='EXPORTING', exit_code=rc)
                 final_record = dict(job, status=status, ended_at=completed_at)
                 write_json(out / 'job.json', job)
@@ -351,14 +386,38 @@ class JobManager:
             with self.lock:
                 job.update(status='CANCELLED' if job['cancelled'] else 'FAIL', ended_at=utc_now(), error=str(error))
         finally:
+            done.set()
+            if watcher:
+                watcher.join(timeout=12)
+            cleanup_error = None
+            try:
+                if self.process and self.process.poll() is None:
+                    try:
+                        os.killpg(self.process.pid, signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError) as error:
+                        if isinstance(error, PermissionError):
+                            cleanup_error = str(error)
+                    self._finish_stop(job_id, self.process)
+                if not cleanup_completed:
+                    self._cleanup_containers(job_id)
+            except Exception as error:
+                cleanup_error = str(error)
             with self.lock:
-                write_json(out / 'job.json', job)
-                self.process = None
-                self.active = None
-                self._ready_time = 0
-                if self.gpu_lock is not None:
-                    os.close(self.gpu_lock)
-                    self.gpu_lock = None
+                try:
+                    if cleanup_error:
+                        job.update(status='FAIL', cleanup_error=cleanup_error, error=cleanup_error)
+                    write_json(out / 'job.json', job)
+                except OSError as error:
+                    job.update(status='FAIL', error='无法保存最终作业状态: ' + str(error))
+                finally:
+                    self.process = None
+                    self.active = None
+                    self._ready_time = 0
+                    if self.gpu_lock is not None:
+                        try:
+                            os.close(self.gpu_lock)
+                        finally:
+                            self.gpu_lock = None
 
     def job_state(self, job):
         out = self.root / job['id']
@@ -383,7 +442,7 @@ class JobManager:
                      identity_summary=optional_json(out / 'identity-summary.json'))
         value['artifacts'] = [dict(name=p.name, url=f'/runs/{job["id"]}/{p.name}') for p in sorted(out.iterdir())
                               if p.is_file() and not p.is_symlink() and p.name in ('report.html', 'summary.json', 'identity-summary.json', 'identity-host.json',
-                                 'server-summary.json', 'run-result.json', 'evidence.zip', 'evidence-manifest.json', 'public-comparison.json', 'launcher.log', 'topology.txt', 'telemetry.csv')]
+                                 'server-summary.json', 'observed-inventory.json', 'server-health-before.json', 'server-health-after.json', 'run-result.json', 'evidence.zip', 'evidence-manifest.json', 'public-comparison.json', 'launcher.log', 'topology.txt', 'telemetry.csv')]
         per_gpu = {}
         for sample in self.samples if self.active == job['id'] else []:
             node = per_gpu.setdefault(sample['uuid'], dict(samples=0, peak_temperature_c=sample['temperature_c']))

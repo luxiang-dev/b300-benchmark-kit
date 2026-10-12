@@ -83,8 +83,40 @@ function setState(value) {
   mock.state = structuredClone(value);
   evaluate(`state=${JSON.stringify(value)}; connected=true; pendingMutation=false; selectionIsManual=false; render();`);
 }
+function textOf(element) {
+  return [element.textContent || "", ...(element.children || []).map(textOf)].join(" ");
+}
 
 async function main() {
+  setState(base);
+  assert.equal(byId.acceptanceStatus.textContent, "NOT_ACCEPTED", "No tests or BOM means procurement is not accepted");
+  assert.equal(byId.acceptanceChecks.children.length, 6, "Default whole-server gaps stay visible");
+  assert.ok(byId.acceptanceStatement.textContent.includes("支付尾款"), "Technical PASS must not invite payment acceptance");
+  const passedJob = {id: "test-only-pass", profile: "full", status: "PASS", stages: [], log_tail: "synthetic", artifacts: [], summary: {overall: "PASS"}};
+  setState({...base, profiles: [{id: "full", title: "完整验收", description: "采购验收通过"}], jobs: [passedJob]});
+  assert.equal(byId.acceptanceStatus.textContent, "NOT_ACCEPTED", "Legacy PASS reports do not imply procurement acceptance");
+  assert.equal(evaluate("profile('full').title"), "完整功能测试", "Old controller wording cannot restore misleading acceptance title");
+  assert.ok(textOf(byId.jobOverview).includes("本次技术检查"));
+  assert.ok(textOf(byId.jobOverview).includes("采购验收：尚未完成"));
+  for (const overall of ["PASS", "CONSISTENT", "REVIEW", "INCOMPLETE"]) {
+    setState({...base, jobs: [{...passedJob, summary: {overall, acceptance: {status: "NOT_ACCEPTED", pending_checks: [{id: "bom", title: "采购 BOM 核对", status: "PENDING"}]}}}]});
+    assert.equal(byId.acceptanceStatus.textContent, "NOT_ACCEPTED", `${overall} technical state keeps procurement separate`);
+    assert.equal(byId.acceptanceChecks.children.length, 1);
+    assert.ok(textOf(byId.acceptanceChecks).includes("采购 BOM 核对"));
+  }
+  setState({...base, jobs: [{...passedJob, summary: {overall: "PASS", acceptance: {status: "ACCEPTED", statement: "采购通过", pending_checks: [{title: "<script>test-only()</script>", status: "PASS"}]}}}]});
+  assert.equal(byId.acceptanceStatus.textContent, "NOT_ACCEPTED", "Unsupported ACCEPTED data fails closed");
+  assert.equal(evaluate("acceptanceFor(jobs()[0]).checks[0].status"), "PENDING", "Externally supplied PASS cannot clear manual gaps");
+  assert.ok(textOf(byId.acceptanceChecks).includes("<script>test-only()</script>"), "Pending titles are rendered as literal text");
+  assert.ok(byId.acceptanceStatement.textContent.includes("不等于"), "Unsupported approval statement is ignored");
+  setState({...base, jobs: [{...passedJob, status: "FAIL", summary: {overall: "FAIL"}}]});
+  assert.equal(byId.acceptanceStatus.textContent, "BLOCKED", "Failure blocks legacy procurement state");
+  assert.equal(byId.acceptanceBlockers.hidden, false);
+  setState({...base, jobs: [{...passedJob, summary: {overall: "PASS", acceptance: {status: "BLOCKED", blockers: ["BOM 型号不符"], pending_checks: [{title: "部件型号", status: "FAIL"}]}}}]});
+  assert.equal(byId.acceptanceStatus.textContent, "BLOCKED", "Acceptance blocker survives technical PASS");
+  assert.ok(textOf(byId.acceptanceBlockers).includes("BOM 型号不符"));
+  setState({...base, jobs: [{...passedJob, summary: {overall: "PASS", acceptance: {pending_checks: [null, {}]}}}]});
+  assert.equal(byId.acceptanceChecks.children.length, 6, "Malformed pending data cannot hide default evidence gaps");
   setState(base);
   assert.equal(evaluate("gate('authenticity').ok"), true);
   assert.equal(evaluate("gate('deepseek').ok"), true, "Readiness uses the backend configured field");
@@ -139,6 +171,6 @@ async function main() {
   evaluate("state.demo=true");
   await evaluate("startJob()");
   assert.equal(mock.requests.filter((request) => request.options.method === "POST").length, mutations, "Read-only actions never POST");
-  console.log("Frontend smoke tests passed: DOM IDs, real-data states, eligibility, safe logs/links, CSRF, start/stop, and read-only guards.");
+  console.log("Frontend smoke tests passed: DOM IDs, procurement fail-closed states, pending evidence, technical result separation, real-data states, eligibility, safe logs/links, CSRF, start/stop, and read-only guards.");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

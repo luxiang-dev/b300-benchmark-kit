@@ -38,7 +38,7 @@ def ecc_snapshot(path):
     return result
 
 
-def hardware_issues(out, expected_gpus=8):
+def hardware_issues(out, expected_gpus=8, strict=False):
     failures, review = [], []
     try:
         before, after = ecc_snapshot(out / "before.xml"), ecc_snapshot(out / "after.xml")
@@ -68,6 +68,20 @@ def hardware_issues(out, expected_gpus=8):
         review.append(f"硬件快照不可用: {exc}")
     kernel = out / "kernel-during.log"
     logs = kernel.read_text(encoding="utf-8", errors="replace") if kernel.exists() else ""
+    if strict:
+        try:
+            record = load_json(out / 'collection-status.json')['kernel-during.log']
+            stderr = (out / 'kernel-during.log.stderr').read_text(encoding='utf-8')
+            argv = record['argv']
+            if record.get('returncode') != 0 or record.get('error') or stderr.strip() or argv[:2] != ['journalctl', '-k'] or '--since' not in argv:
+                review.append('kernel-during.log: 内核日志读取有权限/退出状态/窗口问题，不能证明没有 Xid/RAS。')
+            else:
+                expected_start = float(load_json(out / 'plan.json')['start_epoch'])
+                observed_start = float(argv[argv.index('--since')+1].removeprefix('@'))
+                if not math.isfinite(expected_start) or not math.isfinite(observed_start) or abs(observed_start-expected_start) > 2:
+                    review.append('kernel-during.log: 采集窗口与本次运行开始时间不一致。')
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            review.append('kernel-during.log: 无法确认本次内核日志读取完整性。')
     if not logs.strip() or "-- No entries --" in logs:
         try:
             collected = load_json(out / 'collection-status.json')['kernel-during.log']
@@ -79,9 +93,15 @@ def hardware_issues(out, expected_gpus=8):
             review.append("未获取有效内核日志，Xid 检查需要人工复核。")
     if re.search(r"NVRM.*Xid|Xid \(", logs, re.IGNORECASE):
         failures.append("测试期间内核日志出现 NVIDIA Xid，检查 kernel-during.log。")
+    if re.search(r'(?:EDAC|MCE|Hardware Error|AER|PCIe).*?(?:uncorrectable|uncorrected|fatal error)', logs, re.IGNORECASE):
+        failures.append('测试期间有主机内存/CPU/PCIe 不可纠正或致命硬件错误，检查 kernel-during.log。')
+    elif re.search(r'Hardware Error|EDAC.*(?:CE|error)|AER.*error', logs, re.IGNORECASE):
+        review.append('测试期间有主机 RAS/PCIe 错误记录，需 OEM 复核。')
     if (out / "telemetry.stderr").exists() and (out / "telemetry.stderr").stat().st_size:
         review.append("GPU 遥测出现读取错误，检查 telemetry.stderr。")
-    return failures, review
+    import hardware_health
+    extra_failures, extra_review = hardware_health.evaluate(out, strict)
+    return list(dict.fromkeys(failures + extra_failures)), list(dict.fromkeys(review + extra_review))
 
 
 def telemetry_evidence(out, plan):
@@ -158,7 +178,10 @@ def generate(out):
             if not isinstance(result, dict) or result.get("status") not in ("PASS", "FAIL") or type(result.get("rank")) is not int or not 0 <= result['rank'] < plan['gpus'] or result.get("test") not in ("environment", "stress", "memory", "nccl", "llm", "image"):
                 raise ValueError("Invalid GPU result schema")
             result["file"] = path.name
-            if result['test'] == 'memory' and result['status'] == 'PASS':
+            if result['status'] == 'PASS' and plan.get('result_contract') == 2:
+                import gpu_evidence
+                result['_verification_review'] = gpu_evidence.validate_gpu_result(result, plan, out)
+            elif result['test'] == 'memory' and result['status'] == 'PASS':
                 from memory_probe import validate_evidence
                 validate_evidence(result)
             results.append(result)
@@ -172,12 +195,19 @@ def generate(out):
         stage = by_name.get(label)
         if stage is None or stage["status"] in ("SKIP", "RUNNING"):
             incomplete.append(f"{label}: 未运行或跳过。")
-        if label not in ("dcgm", "nccl-public", "deepseek-r1-mlperf", "identity", "server"):
+        if label not in ("dcgm", "nccl-public", "deepseek-r1-mlperf", "identity", "server", "server-health-before", "server-health-after"):
             matches = [x for x in results if x["test"] + ("-" + Path(x["model"]).name if x.get("model") else "") == label]
             ranks = {x["rank"] for x in matches if x.get("status") == "PASS"}
             if ranks != set(range(plan["gpus"])):
                 incomplete.append(f"{label}: 成功结果未覆盖全部 {plan['gpus']} 张 GPU。")
-    failures, review = hardware_issues(out, plan['gpus'])
+            if plan.get('result_contract') == 2:
+                passing = [x for x in matches if x.get('status') == 'PASS']
+                physical = set(ecc_snapshot(out / 'before.xml'))
+                if len(passing) != plan['gpus'] or {x.get('uuid') for x in passing} != physical:
+                    incomplete.append(f'{label}: 本次结果未唯一覆盖全部物理 GPU UUID。')
+    failures, review = hardware_issues(out, plan['gpus'], strict=plan.get('result_contract') == 2)
+    for result in results:
+        review += [result['file'] + ': ' + item for item in result.pop('_verification_review', [])]
     identity = None
     if 'identity' in plan['required']:
         try:
@@ -223,6 +253,9 @@ def generate(out):
                     for value in node:
                         walk(value)
             walk(dcgm)
+            if plan.get('result_contract') == 2:
+                import dcgm_evidence
+                review += dcgm_evidence.validate_dcgm_result(dcgm, plan, out)
             if any(x in ("fail", "failed", "error") for x in statuses):
                 failures.append("DCGM JSON 内含失败结果，检查 dcgm.json。")
             if not any(x == "pass" for x in statuses):
@@ -247,6 +280,15 @@ def generate(out):
         except Exception as error:
             incomplete.append('服务器证据无效或缺失: ' + str(error))
     failures += parse_errors + stage_errors
+    server_health = None
+    if 'server-health-before' in plan['required'] or 'server-health-after' in plan['required']:
+        try:
+            import server_health as health_reader
+            server_health = health_reader.evaluate(out)
+            failures += ['整机健康: ' + item for item in server_health['failures']]
+            review += ['整机健康: ' + item for item in server_health['review']]
+        except Exception as error:
+            incomplete.append('整机 SMART/BMC 健康证据无效: ' + str(error))
     failures += [f"{x['name']}: 退出码 {x['exit_code']}" for x in stages if x["status"] == "FAIL"]
     failures += [f"{x['file']}: {x.get('error', '测试失败')}" for x in results if x.get("status") != "PASS"]
     telemetry, tfailures, treview = telemetry_evidence(out, plan)
@@ -255,7 +297,11 @@ def generate(out):
     overall = "FAIL" if failures else "INCOMPLETE" if incomplete else "REVIEW" if review else "PASS"
     summary = dict(overall=overall, profile=plan["profile"], expected_gpus=plan["gpus"], stages=stages,
                    failures=failures, incomplete=incomplete, review=review, results=results, public_comparison=public,
-                   telemetry=telemetry, identity_verification=identity, server_verification=server)
+                   telemetry=telemetry, identity_verification=identity, server_verification=server, server_health=server_health)
+    import purchase_acceptance
+    summary['acceptance'] = purchase_acceptance.evaluate(summary)
+    import inventory_summary
+    summary['observed_inventory'] = inventory_summary.derive(out)
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
     esc = lambda value: html.escape(str(value))
     table = "".join(f"<tr><td>{esc(x['name'])}</td><td>{esc(x['status'])}</td><td>{x['exit_code']}</td></tr>" for x in stages)
@@ -266,6 +312,8 @@ def generate(out):
                         '</pre><p>CONSISTENT 仅表示本次软件可观察到的身份和计算证据一致；仍需将序列号、板标签、采购记录及 BMC 清单交给厂商核对。</p></section>') if identity else ''
     server_section = ('<section><h2>整机清单与有限功能抽查</h2><pre>' + esc(json.dumps(server, indent=2, ensure_ascii=False)) +
                       '</pre><p>默认 RAM 仅测试 256 MiB、结果盘仅写读 128 MiB 临时文件；不覆盖全部内存/介质，不测网卡远端线速，也不替代 OEM 验收。</p></section>') if server else ''
+    if server_health:
+        server_section += '<section><h2>物理磁盘 SMART 与 BMC 健康复核</h2><pre>' + esc(json.dumps(server_health, indent=2, ensure_ascii=False)) + '</pre></section>'
     explanation = ("DeepSeek-R1 使用完整 FP4 模型、TP8/EP8，显示 MLPerf v6.0 Offline 整机输出 Tokens/s。"
                    "性能与准确率各启动新的 endpoint；准确率响应、长度和原始日志须通过验证。公测差距仅为性能参考，本地复现未完成审计或认证。"
                    if plan["profile"] == "deepseek" else
@@ -280,9 +328,11 @@ def generate(out):
 <title>B300 {plan['gpus']}卡测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
 <h1>NVIDIA B300 · {plan['gpus']}卡测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
 <p>PASS 仅表示本次已运行项目通过。短时测试不能证明长期稳定性，也不能替代厂商验收或离线现场诊断。</p><ul>{notes}</ul></section>
+<section><h2>采购验收状态：{esc(summary['acceptance']['status'])}</h2><p>{esc(summary['acceptance']['statement'])}</p><ul>{''.join('<li>待完成：' + esc(item['title']) + '</li>' for item in summary['acceptance']['pending_checks'])}</ul></section>
 <section><h2>测试阶段</h2><table><tr><th>项目</th><th>结果</th><th>退出码</th></tr>{table}</table></section>
 {identity_section}
 {server_section}
+<section><h2>实测配置清单（不是采购承诺）</h2><p>请将 observed-inventory.json 交给卖方核对。缺失字段保留 UNKNOWN；此清单不会自动完成配置验收。</p><pre>{esc(json.dumps(summary['observed_inventory'], indent=2, ensure_ascii=False))}</pre></section>
 {public_benchmark.render(public)}
 <section><h2>遥测</h2><pre>{esc(json.dumps(summary['telemetry'],indent=2,ensure_ascii=False))}</pre><p>完整采样见 telemetry.csv；PCIe/NVLink 拓扑见 topology.txt 和 nvlink.txt。</p></section>
 <section><h2>图像输出</h2>{images}</section><h2>每卡结果与模型输出</h2>{details}

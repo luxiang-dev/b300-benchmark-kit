@@ -2,6 +2,8 @@
 
 面向 Ubuntu 单节点 **8×NVIDIA B300** 的离线身份核验、整机功能抽查、稳定性测试与公测性能对比工具，提供中文可视化工作台。
 
+**主要用于采购验货辅助，技术 PASS 不等于整机验收完成。** 新报告独立显示采购状态与待补证项目；配置清单、厂商来源/保修和完整整机诊断缺失时不自动收货通过。买方暂不清楚配置时，先导出实测清单再让卖方核对，见 [采购验货要求与卖方材料清单](docs/采购验货要求.md)。
+
 **Ubuntu 22.04 / Python 3.10 和 Ubuntu 24.04 / Python 3.12 均通过 160 项测试，无跳过**；前端、Bash、UTF-8/LF 和 CLI 检查通过。[CI 记录](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38200551379)。测试覆盖身份/显存证据判断、整机有限抽查、HTTP 控制、取消/清理、封装和原有 MLPerf 流程。**GPU 部分仍待实机验证**；CPU/模拟启动测试不代表真实 B300 测试通过，范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
 
 包含 PCI/CUDA/UUID/序列号交叉核验、每卡约 85% HBM 地址模式写读、GPU/ECC/拓扑、BF16 压力、8 卡 NCCL、服务器功能抽查、Qwen/SDXL，以及可下载的 HTML/JSON/原始证据 ZIP。软件证据一致和负载通过不能替代厂商实物与采购来源确认。
@@ -10,6 +12,7 @@
 
 - [总使用说明：Ubuntu 准备、运行、结果与排错](docs/使用总览.md)
 - [8卡可视化验真：离线准备、本地/Windows 操作、报告解释](docs/可视化验真操作.md)
+- [采购验货门禁、当前遗漏与厂商材料清单](docs/采购验货要求.md)
 - [基础包详细使用说明](README_使用说明.md)
 - [DeepSeek-R1 / MLPerf 专项准备与运行](README_DeepSeek_MLPerf.md)
 - [Ubuntu 复查、修复与优化建议](docs/UBUNTU_REVIEW.md)

@@ -41,6 +41,7 @@ class Workflow:
         self.stage_lock = threading.Lock()
         self.container = 'b300-auth-' + uuid.uuid4().hex[:12]
         self.job_id = os.environ.get('B300_JOB_ID', self.container)
+        self.run_id = uuid.uuid4().hex
         self.telemetry_start = None
         self.started = time.time()
         self.watchdog_error = None
@@ -124,7 +125,7 @@ class Workflow:
         deadline = time.monotonic() + timeout
         with (self.out / (label + '.log')).open('w', encoding='utf-8') as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
-                                       env={**os.environ, 'PYTHONUNBUFFERED': '1'})
+                                       env={**os.environ, 'PYTHONUNBUFFERED': '1', 'B300_RUN_ID': self.run_id})
             with self.current_lock:
                 self.current = process
             try:
@@ -158,6 +159,7 @@ class Workflow:
                 '--label', 'b300-kit.job=' + self.job_id, '--network', 'none', '--gpus', 'all', '--shm-size=16g',
                 '--ulimit', 'memlock=-1', '--ulimit', 'stack=67108864', '-e', 'PYTHONUNBUFFERED=1',
                 '-e', 'HF_HUB_OFFLINE=1', '-e', 'TRANSFORMERS_OFFLINE=1',
+                '-e', 'B300_RUN_ID=' + self.run_id,
                 '-v', str(ROOT) + ':/kit:ro', '-v', str(self.out) + ':/out', self.image_id] + command
 
     def torchrun(self, script, *args):
@@ -185,6 +187,11 @@ class Workflow:
                 raise RuntimeError('Disable MIG before testing full physical GPUs')
             if gpu.findtext('ecc_mode/current_ecc') != 'Enabled':
                 raise RuntimeError('ECC must be enabled and readable')
+            if gpu.findtext('retired_pages/pending_retirement') in ('Yes', 'Pending') or gpu.findtext('remapped_rows/pending') in ('Yes', 'Pending') or gpu.findtext('remapped_rows/remapping_failure_occurred') == 'Yes':
+                raise RuntimeError('GPU has pending/failed memory repair; obtain OEM diagnosis before loading it')
+            recovery = gpu.findtext('gpu_recovery_action')
+            if recovery not in (None, 'None', 'N/A', 'No Action'):
+                raise RuntimeError('GPU requires recovery action: ' + recovery)
         driver = tree.findtext('driver_version', '0')
         if int(driver.split('.')[0]) < 580:
             raise RuntimeError('Requires a compatible R580+ driver')
@@ -207,14 +214,29 @@ class Workflow:
                    expected_gpus=self.args.gpus, code_sha256={p.name: digest(p) for p in sorted(ROOT.glob('*.py'))}))
         self.record('preflight', 'PASS')
 
+    def check_output(self):
+        existing = list(self.out.iterdir())
+        if existing:
+            allowed = False
+            if os.environ.get('B300_JOB_ID') == self.job_id and {p.name for p in existing} <= {'job.json', 'launcher.log'} and all(p.is_file() and not p.is_symlink() for p in existing):
+                try:
+                    job = json.loads((self.out / 'job.json').read_text(encoding='utf-8'))
+                    allowed = job['id'] == self.job_id and job['profile'] == self.args.profile and job['status'] in ('RUNNING', 'STOPPING') and job['exit_code'] is None
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass
+            if not allowed:
+                raise RuntimeError('Use a fresh, empty result directory; old evidence cannot be reused')
+
     def run(self):
         self.out.mkdir(parents=True, exist_ok=True)
-        if (self.out / 'plan.json').exists():
-            raise RuntimeError('Use a fresh result directory')
+        self.check_output()
         required = ['identity']
         if self.args.profile == 'authenticity':
-            required += ['server', 'environment', 'memory', 'stress', 'nccl', 'nccl-public', 'dcgm']
-        write_json(self.out / 'plan.json', dict(profile=self.args.profile, gpus=self.args.gpus, required=required, max_gpu_temp=self.args.max_temp))
+            required += ['server', 'server-health-before', 'environment', 'memory', 'stress', 'nccl', 'nccl-public', 'dcgm', 'server-health-after']
+        write_json(self.out / 'plan.json', dict(profile=self.args.profile, gpus=self.args.gpus, required=required,
+                   max_gpu_temp=self.args.max_temp, result_contract=2, run_id=self.run_id, seconds=self.args.seconds,
+                   matrix=8192, memory_fraction=self.args.memory_fraction, stress_memory_fraction=0.65, nccl_iterations=50,
+                   start_epoch=self.started))
         shutil.copyfile(ROOT / 'public_baselines.json', self.out / 'public-baselines.json')
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: self.cancelled.set())
@@ -248,6 +270,7 @@ class Workflow:
                 self.record('identity', 'PASS')
             if self.args.profile == 'authenticity':
                 self.execute('server', [sys.executable, str(ROOT / 'server_probe.py'), 'full', '--out', str(self.out)], 900)
+                self.execute('server-health-before', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'before'], 600)
                 self.execute('environment', self.torchrun('gpu_test.py', 'environment'))
                 self.execute('memory', self.torchrun('memory_probe.py', '--memory-fraction', str(self.args.memory_fraction), '--max-temp', str(self.args.max_temp)))
                 self.execute('stress', self.torchrun('gpu_test.py', 'stress', '--seconds', str(self.args.seconds), '--max-temp', str(self.args.max_temp), '--memory-fraction', '0.65'), self.args.seconds + 1800)
@@ -266,6 +289,7 @@ class Workflow:
                         self.record('dcgm', 'SKIP')
                 else:
                     self.record('dcgm', 'SKIP')
+                self.execute('server-health-after', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'after'], 600)
         except Exception as error:
             rc = 130 if self.cancelled.is_set() and not self.watchdog_error else 1
             self.record('launcher', 'FAIL', rc)
@@ -313,7 +337,12 @@ def main():
         parser.error('The GPU workflow requires Linux; dashboard --preview can be used on Windows')
     if not 1 <= args.gpus <= 8 or not 1 <= args.seconds <= 86400 or not 0.5 <= args.memory_fraction <= 0.9 or not 1 <= args.max_temp < 120:
         parser.error('Invalid GPU count, duration, memory fraction or temperature limit')
-    return Workflow(args).run()
+    import job_lock
+    descriptor = job_lock.acquire()
+    try:
+        return Workflow(args).run()
+    finally:
+        os.close(descriptor)
 
 
 if __name__ == '__main__':

@@ -61,6 +61,24 @@ class WorkflowReportTests(unittest.TestCase):
         self.save("telemetry-window.json", dict(start_epoch=start, end_epoch=start+3))
         shutil.copyfile(launcher.ROOT / "public_baselines.json", self.out / "public-baselines.json")
 
+    def launch_host(self, host):
+        # Reproduce collection during this run, rather than bypassing the new
+        # production guard against reusing stale result directories.
+        paths = list(self.out.rglob('*'))
+        files = {p.relative_to(self.out): p.read_bytes() for p in paths if p.is_file()}
+        for p in sorted(paths, key=lambda p: len(p.parts), reverse=True):
+            if p.is_file():
+                p.unlink()
+            elif p.is_dir():
+                p.rmdir()
+        def restore(_out):
+            for name, raw in files.items():
+                target = self.out / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+            return host
+        return restore
+
     def report_fixture(self, required=None, count=2):
         self.identities(count)
         self.hardware(count)
@@ -255,7 +273,7 @@ class WorkflowReportTests(unittest.TestCase):
         def capture(argv, name, timeout=20):
             self.hardware(2)
             return subprocess.CompletedProcess(argv, 0, "synthetic host capture", "")
-        with patch.object(launcher.authenticity, "collect_host", return_value=host), \
+        with patch.object(launcher.authenticity, "collect_host", side_effect=self.launch_host(host)), \
              patch.object(workflow, "preflight", side_effect=RuntimeError("synthetic local Docker image missing")), \
              patch.object(workflow, "capture", side_effect=capture), \
              patch.object(workflow, "stop_current"), patch.object(workflow, "stop_container"), \
@@ -278,7 +296,7 @@ class WorkflowReportTests(unittest.TestCase):
             self.hardware(2)
             (self.out / "kernel-during.log").write_text("NVRM: Xid (PCI:0000:0a:00): 79, synthetic fault", encoding="utf-8")
             return subprocess.CompletedProcess(argv, 0, "synthetic capture", "")
-        with patch.object(launcher.authenticity, "collect_host", return_value=host), \
+        with patch.object(launcher.authenticity, "collect_host", side_effect=self.launch_host(host)), \
              patch.object(workflow, "preflight", side_effect=RuntimeError("synthetic image missing")), \
              patch.object(workflow, "capture", side_effect=capture), \
              patch.object(workflow, "stop_current"), patch.object(workflow, "stop_container"), \
@@ -295,7 +313,7 @@ class WorkflowReportTests(unittest.TestCase):
         def capture(argv, name, timeout=20):
             self.hardware(2)
             return subprocess.CompletedProcess(argv, 0, "synthetic capture", "")
-        with patch.object(launcher.authenticity, "collect_host", return_value=host), \
+        with patch.object(launcher.authenticity, "collect_host", side_effect=self.launch_host(host)), \
              patch.object(workflow, "preflight", side_effect=RuntimeError("synthetic model mismatch")), \
              patch.object(workflow, "capture", side_effect=capture), \
              patch.object(workflow, "stop_current"), patch.object(workflow, "stop_container"), \
@@ -315,7 +333,7 @@ class WorkflowReportTests(unittest.TestCase):
         def capture(argv, name, timeout=20):
             self.hardware(2)
             return subprocess.CompletedProcess(argv, 0, "synthetic capture", "")
-        with patch.object(launcher.authenticity, "collect_host", return_value=host), \
+        with patch.object(launcher.authenticity, "collect_host", side_effect=self.launch_host(host)), \
              patch.object(workflow, "preflight", side_effect=RuntimeError("synthetic image missing")), \
              patch.object(workflow, "capture", side_effect=capture), \
              patch.object(workflow, "stop_current"), patch.object(workflow, "stop_container"), \
@@ -332,7 +350,7 @@ class WorkflowReportTests(unittest.TestCase):
         def capture(_argv, name, timeout=20):
             self.hardware(2)
             return subprocess.CompletedProcess(_argv, 0, "synthetic capture", "")
-        with patch.object(launcher.authenticity, "collect_host", return_value=host), \
+        with patch.object(launcher.authenticity, "collect_host", side_effect=self.launch_host(host)), \
              patch.object(workflow, "preflight", side_effect=RuntimeError("synthetic Docker unavailable")), \
              patch.object(workflow, "capture", side_effect=capture), \
              patch.object(workflow, "stop_current"), patch.object(workflow, "stop_container"), \

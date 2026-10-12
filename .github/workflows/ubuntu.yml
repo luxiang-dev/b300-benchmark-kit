@@ -50,5 +50,7 @@ jobs:
           python run_authenticity.py --help
           python dashboard.py --help
           python server_probe.py --help
+          python server_health.py --help
+          python inventory_summary.py --help
           python bundle.py status
           python download_models.py --plan

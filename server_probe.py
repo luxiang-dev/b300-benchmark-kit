@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import mmap
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -41,7 +42,7 @@ def save(path, data):
 def capture(out, label, command):
     error, rc, stdout, stderr = None, None, b'', b''
     try:
-        result = subprocess.run(command, capture_output=True, timeout=20, check=False)
+        result = subprocess.run(command, capture_output=True, timeout=20, check=False, env={**os.environ, 'LC_ALL': 'C'})
         rc, stdout, stderr = result.returncode, result.stdout, result.stderr
     except (OSError, subprocess.TimeoutExpired) as failure:
         error = str(failure)
@@ -61,10 +62,26 @@ def available_ram():
         key, value = line.split(':', 1)
         fields[key] = int(value.strip().split()[0]) * 1024
     available = fields.get('MemAvailable', fields.get('MemFree', 0))
-    for limit_path, used_path in (
+    budgets = [
         ('/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory.current'),
         ('/sys/fs/cgroup/memory/memory.limit_in_bytes', '/sys/fs/cgroup/memory/memory.usage_in_bytes'),
-    ):
+    ]
+    # A host process can be below a systemd/user cgroup whose limit is much
+    # smaller than host RAM. Walk all v2 ancestors instead of only mount root.
+    try:
+        for entry in Path('/proc/self/cgroup').read_text().splitlines():
+            hierarchy, controllers, relative = entry.split(':', 2)
+            if hierarchy == '0' and not controllers:
+                pieces = [part for part in relative.split('/') if part]
+                if '..' in pieces:
+                    continue
+                base = Path('/sys/fs/cgroup')
+                for depth in range(1, len(pieces)+1):
+                    directory = base.joinpath(*pieces[:depth])
+                    budgets.append((directory / 'memory.max', directory / 'memory.current'))
+    except (OSError, ValueError):
+        pass
+    for limit_path, used_path in budgets:
         try:
             limit, used = Path(limit_path).read_text().strip(), int(Path(used_path).read_text())
             if limit != 'max':
