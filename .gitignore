@@ -3,6 +3,7 @@
 __pycache__/
 /tests/.test-tmp/
 /bundle.sha256.json
+/hardware.sha256.json
 /PACKAGE_STATUS.json
 /demo-report/
 /public-reference-preview/

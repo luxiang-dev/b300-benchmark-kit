@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+mode="${1:-full}"
+case "$mode" in full|--hardware-only) ;; *) echo 'Usage: bash prepare_offline.sh [--hardware-only]' >&2; exit 2 ;; esac
 for c in docker python3; do command -v "$c" >/dev/null || { echo "Missing $c" >&2; exit 1; }; done
 arch="${TARGET_ARCH:-$(uname -m)}"
 case "$arch" in x86_64|amd64) platform=linux/amd64; arch=amd64 ;; aarch64|arm64) platform=linux/arm64; arch=arm64 ;; *) echo "Unsupported CPU: $arch" >&2; exit 1 ;; esac
 echo "Preparing $platform package. GPU is not required on the preparation host."
-python3 download_models.py
+if [[ "$mode" != --hardware-only ]]; then python3 download_models.py; fi
 mkdir -p images
 docker pull --platform "$platform" nvcr.io/nvidia/pytorch:25.10-py3
 # Pin the pulled base by digest, then keep the resulting complete image by ID.
@@ -17,5 +19,5 @@ docker run --rm --network none b300-test:1.0 python -c 'import torch,transformer
 docker image inspect b300-test:1.0 > images/runtime.inspect.json
 docker save -o images/b300-test.tar.part b300-test:1.0
 mv -- images/b300-test.tar.part images/b300-test.tar
-python3 bundle.py seal
+if [[ "$mode" == --hardware-only ]]; then python3 bundle.py seal --hardware-only; else python3 bundle.py seal; fi
 echo "OFFLINE PACKAGE SEALED. Copy this entire directory to your external disk."

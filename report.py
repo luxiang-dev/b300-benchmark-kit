@@ -38,12 +38,12 @@ def ecc_snapshot(path):
     return result
 
 
-def hardware_issues(out):
+def hardware_issues(out, expected_gpus=8):
     failures, review = [], []
     try:
         before, after = ecc_snapshot(out / "before.xml"), ecc_snapshot(out / "after.xml")
-        if set(before) != set(after) or len(after) != 8:
-            failures.append("测试前后 GPU 列表发生变化，或 GPU 数量不是 8。")
+        if set(before) != set(after) or len(after) != expected_gpus:
+            failures.append(f"测试前后 GPU 列表发生变化，或 GPU 数量不是 {expected_gpus}。")
         for uuid, counters in after.items():
             if not counters:
                 review.append(f"{uuid}: 无法读取不可纠正 ECC 计数。")
@@ -69,7 +69,14 @@ def hardware_issues(out):
     kernel = out / "kernel-during.log"
     logs = kernel.read_text(encoding="utf-8", errors="replace") if kernel.exists() else ""
     if not logs.strip() or "-- No entries --" in logs:
-        review.append("未获取有效内核日志，Xid 检查需要人工复核。")
+        try:
+            collected = load_json(out / 'collection-status.json')['kernel-during.log']
+            stderr = (out / 'kernel-during.log.stderr').read_text(encoding='utf-8')
+            proven_empty = collected['returncode'] == 0 and collected.get('error') is None and not stderr.strip() and collected['argv'][:2] == ['journalctl', '-k']
+        except (OSError, ValueError, KeyError, TypeError):
+            proven_empty = False
+        if not proven_empty:
+            review.append("未获取有效内核日志，Xid 检查需要人工复核。")
     if re.search(r"NVRM.*Xid|Xid \(", logs, re.IGNORECASE):
         failures.append("测试期间内核日志出现 NVIDIA Xid，检查 kernel-during.log。")
     if (out / "telemetry.stderr").exists() and (out / "telemetry.stderr").stat().st_size:
@@ -130,18 +137,30 @@ def telemetry_evidence(out, plan):
 def generate(out):
     plan = load_json(out / "plan.json")
     stages = []
+    stage_errors = []
     path = out / "stages.tsv"
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
-            name, status, code = line.split("\t")
-            stages.append(dict(name=name, status=status, exit_code=int(code)))
+            try:
+                name, status, code = line.split("\t")
+                code = int(code)
+                if status not in ('RUNNING', 'PASS', 'FAIL', 'SKIP') or (status in ('PASS', 'SKIP', 'RUNNING') and code != 0):
+                    raise ValueError('Inconsistent stage status/exit code')
+                stages.append(dict(name=name, status=status, exit_code=code))
+            except ValueError as error:
+                stage_errors.append(f'无效阶段记录: {line}: {error}')
     results, parse_errors = [], []
     for path in sorted(out.glob("*-gpu*.json")):
+        if path.name.startswith('identity-gpu'):
+            continue
         try:
             result = load_json(path)
-            if not isinstance(result, dict) or result.get("status") not in ("PASS", "FAIL") or not isinstance(result.get("rank"), int) or result.get("test") not in ("environment", "stress", "nccl", "llm", "image"):
+            if not isinstance(result, dict) or result.get("status") not in ("PASS", "FAIL") or type(result.get("rank")) is not int or not 0 <= result['rank'] < plan['gpus'] or result.get("test") not in ("environment", "stress", "memory", "nccl", "llm", "image"):
                 raise ValueError("Invalid GPU result schema")
             result["file"] = path.name
+            if result['test'] == 'memory' and result['status'] == 'PASS':
+                from memory_probe import validate_evidence
+                validate_evidence(result)
             results.append(result)
         except Exception as exc:
             parse_errors.append(f"{path.name}: {exc}")
@@ -151,14 +170,25 @@ def generate(out):
         incomplete.append("仅采集清单，未运行压力、通信或模型测试。")
     for label in plan["required"]:
         stage = by_name.get(label)
-        if stage is None or stage["status"] == "SKIP":
+        if stage is None or stage["status"] in ("SKIP", "RUNNING"):
             incomplete.append(f"{label}: 未运行或跳过。")
-        if label not in ("dcgm", "nccl-public", "deepseek-r1-mlperf"):
+        if label not in ("dcgm", "nccl-public", "deepseek-r1-mlperf", "identity", "server"):
             matches = [x for x in results if x["test"] + ("-" + Path(x["model"]).name if x.get("model") else "") == label]
             ranks = {x["rank"] for x in matches if x.get("status") == "PASS"}
             if ranks != set(range(plan["gpus"])):
                 incomplete.append(f"{label}: 成功结果未覆盖全部 {plan['gpus']} 张 GPU。")
-    failures, review = hardware_issues(out)
+    failures, review = hardware_issues(out, plan['gpus'])
+    identity = None
+    if 'identity' in plan['required']:
+        try:
+            import authenticity
+            identity = authenticity.evaluate_identity(out, plan['gpus'])
+            if identity['status'] == 'FAIL':
+                failures.append('身份交叉核验出现矛盾，检查 identity-summary.json。')
+            elif identity['status'] != 'CONSISTENT':
+                review.append('身份核验存在缺失或需复核的证据，检查 identity-summary.json。')
+        except Exception as error:
+            incomplete.append('身份证据无法复核: ' + str(error))
     try:
         public = public_benchmark.compare(out)
         if public["measurement_error"]:
@@ -201,7 +231,22 @@ def generate(out):
                 review.append("DCGM 存在跳过、警告或无法识别的状态，检查 dcgm.json。")
         except Exception as exc:
             incomplete.append(f"DCGM JSON 无法解析: {exc}")
-    failures += parse_errors
+    server = None
+    if 'server' in plan['required']:
+        try:
+            import server_probe
+            server = server_probe.read_result(out)
+            if server['mode'] != 'full':
+                incomplete.append('服务器仅采集清单，未执行 CPU/RAM/结果盘抽查。')
+            if server['status'] == 'FAIL':
+                failures.append('服务器功能抽查失败，检查 server-summary.json。')
+            elif server['status'] != 'PASS':
+                review += ['服务器清单/抽查需复核: ' + item for item in server['findings']]
+                if any(c['status'] != 'PASS' for c in server['checks'].values()):
+                    review.append('服务器有功能抽查跳过，检查 server-summary.json。')
+        except Exception as error:
+            incomplete.append('服务器证据无效或缺失: ' + str(error))
+    failures += parse_errors + stage_errors
     failures += [f"{x['name']}: 退出码 {x['exit_code']}" for x in stages if x["status"] == "FAIL"]
     failures += [f"{x['file']}: {x.get('error', '测试失败')}" for x in results if x.get("status") != "PASS"]
     telemetry, tfailures, treview = telemetry_evidence(out, plan)
@@ -210,24 +255,34 @@ def generate(out):
     overall = "FAIL" if failures else "INCOMPLETE" if incomplete else "REVIEW" if review else "PASS"
     summary = dict(overall=overall, profile=plan["profile"], expected_gpus=plan["gpus"], stages=stages,
                    failures=failures, incomplete=incomplete, review=review, results=results, public_comparison=public,
-                   telemetry=telemetry)
+                   telemetry=telemetry, identity_verification=identity, server_verification=server)
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
     esc = lambda value: html.escape(str(value))
     table = "".join(f"<tr><td>{esc(x['name'])}</td><td>{esc(x['status'])}</td><td>{x['exit_code']}</td></tr>" for x in stages)
     details = "".join(f"<details><summary>{esc(x['test'])} · GPU {x['rank']} · {esc(x['status'])}</summary><pre>{esc(json.dumps(x, indent=2, ensure_ascii=False))}</pre></details>" for x in results)
     images = "".join(f'<a href="{esc(p.name)}"><img src="{esc(p.name)}" alt="{esc(p.name)}"></a>' for p in sorted(out.glob("sdxl-gpu*.png")))
     notes = "".join(f"<li>{esc(x)}</li>" for x in failures + incomplete + review)
+    identity_section = ('<section><h2>硬件身份交叉核验</h2><pre>' + esc(json.dumps(identity, indent=2, ensure_ascii=False)) +
+                        '</pre><p>CONSISTENT 仅表示本次软件可观察到的身份和计算证据一致；仍需将序列号、板标签、采购记录及 BMC 清单交给厂商核对。</p></section>') if identity else ''
+    server_section = ('<section><h2>整机清单与有限功能抽查</h2><pre>' + esc(json.dumps(server, indent=2, ensure_ascii=False)) +
+                      '</pre><p>默认 RAM 仅测试 256 MiB、结果盘仅写读 128 MiB 临时文件；不覆盖全部内存/介质，不测网卡远端线速，也不替代 OEM 验收。</p></section>') if server else ''
     explanation = ("DeepSeek-R1 使用完整 FP4 模型、TP8/EP8，显示 MLPerf v6.0 Offline 整机输出 Tokens/s。"
                    "性能与准确率各启动新的 endpoint；准确率响应、长度和原始日志须通过验证。公测差距仅为性能参考，本地复现未完成审计或认证。"
                    if plan["profile"] == "deepseek" else
                    "LLM 是 8 个独立副本，吞吐包含预填充与解码，未测首 Token 延迟，也未使用张量并行。SDXL 按每卡记录生成时间。"
                    "GEMM 是 BF16 合成负载；PyTorch NCCL 使用 MAX 性能测量与 SUM 正确性检查。nccl-public 单独使用官方 FP32 SUM all_reduce_perf 口径。"
                    "带宽不能直接证明流量走了 NVLink；应对照同型号、同软件、同功耗配置的基线。")
+    if plan['profile'] in ('identity', 'authenticity'):
+        explanation = ('身份核验交叉检查 PCI、CUDA 架构、UUID、容量和真实计算。HBM 地址模式验证同时分配的实际容量，'
+                       '累计读验字节不是显存容量；85%目标覆盖不是全显存覆盖。GEMM/NCCL/DCGM 为功能与稳定性证据，'
+                       '不能替代板标签、采购记录和厂商认证。公测性能差距本身不等于假卡。')
     page = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>B300 8卡测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
-<h1>NVIDIA B300 · 8卡测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
+<title>B300 {plan['gpus']}卡测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
+<h1>NVIDIA B300 · {plan['gpus']}卡测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
 <p>PASS 仅表示本次已运行项目通过。短时测试不能证明长期稳定性，也不能替代厂商验收或离线现场诊断。</p><ul>{notes}</ul></section>
 <section><h2>测试阶段</h2><table><tr><th>项目</th><th>结果</th><th>退出码</th></tr>{table}</table></section>
+{identity_section}
+{server_section}
 {public_benchmark.render(public)}
 <section><h2>遥测</h2><pre>{esc(json.dumps(summary['telemetry'],indent=2,ensure_ascii=False))}</pre><p>完整采样见 telemetry.csv；PCIe/NVLink 拓扑见 topology.txt 和 nvlink.txt。</p></section>
 <section><h2>图像输出</h2>{images}</section><h2>每卡结果与模型输出</h2>{details}

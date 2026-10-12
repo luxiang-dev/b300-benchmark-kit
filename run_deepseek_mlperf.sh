@@ -96,7 +96,8 @@ monitor_pid=$!
 rc=0
 # Scratch is mounted at its original absolute path to preserve prepared links.
 # Keep the complete source repository visible so pinned-revision checks work.
-docker run --rm --pull never --name "$container_name" --network none --gpus all \
+record deepseek-r1-mlperf RUNNING 0
+docker run --rm --pull never --name "$container_name" --label "b300-kit.job=${B300_JOB_ID:-cli-$$}" --network none --gpus all \
     --shm-size="${MLPERF_SHM_SIZE:-32g}" --ulimit memlock=-1 --ulimit stack=67108864 \
     --entrypoint /bin/bash -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e PIP_NO_INDEX=1 \
     -e OMPI_ALLOW_RUN_AS_ROOT=1 -e OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 \

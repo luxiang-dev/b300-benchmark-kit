@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$DiskRoot,
     [string]$PythonExe = 'python',
-    [switch]$AllowIncomplete
+    [switch]$AllowIncomplete,
+    [switch]$HardwareOnly
 )
 $ErrorActionPreference = 'Stop'
 $taskSource = (Resolve-Path -LiteralPath $PSScriptRoot).Path
@@ -11,13 +12,16 @@ $taskVolumeRoot = [IO.Path]::GetPathRoot($taskDisk)
 if ($taskDisk.TrimEnd('\','/') -ne $taskVolumeRoot.TrimEnd('\','/')) { throw 'Use an explicit drive root, such as E:\.' }
 if ($taskVolumeRoot -eq [IO.Path]::GetPathRoot($taskSource)) { throw 'Destination must be a different drive from the source.' }
 if (-not $AllowIncomplete) {
-    & $PythonExe (Join-Path $taskSource 'bundle.py') verify
+    $taskVerifyOptions = @('verify')
+    if ($HardwareOnly) { $taskVerifyOptions += '--hardware-only' }
+    & $PythonExe (Join-Path $taskSource 'bundle.py') @taskVerifyOptions
     if ($LASTEXITCODE -ne 0) { throw 'Complete and seal the offline bundle first; see README.' }
 } else {
     Write-Warning 'Copying an incomplete preparation folder. It is not ready for an offline server.'
 }
 $taskFiles = @(Get-ChildItem -LiteralPath $taskSource -Recurse -File -Force | Where-Object {
-    $_.Name -notmatch '\.(part|tmp|pyc)$' -and $_.FullName -notmatch '[\\/](\.git|\.github|__pycache__|tests|b300-results|demo-report|public-reference-preview)[\\/]'
+    $_.Name -notmatch '\.(part|tmp|pyc)$' -and $_.FullName -notmatch '[\\/](\.git|\.github|__pycache__|tests|b300-results|demo-report|public-reference-preview)[\\/]' -and
+    (-not $HardwareOnly -or ($_.FullName -notmatch '[\\/]models[\\/]' -and $_.Name -ne 'bundle.sha256.json'))
 })
 $taskBytes = ($taskFiles | Measure-Object -Property Length -Sum).Sum
 $taskDrive = Get-PSDrive -Name $taskVolumeRoot.Substring(0,1) -PSProvider FileSystem
@@ -38,7 +42,7 @@ foreach ($taskFile in $taskFiles) {
     if ((Get-Item -LiteralPath $taskTarget).Length -ne $taskFile.Length) { throw ('Copy size mismatch: ' + $taskRelative) }
 }
 if (-not $AllowIncomplete) {
-    & $PythonExe (Join-Path $taskDestination 'bundle.py') verify
+    & $PythonExe (Join-Path $taskDestination 'bundle.py') @taskVerifyOptions
     if ($LASTEXITCODE -ne 0) { throw 'Destination verification failed; do not use this copy.' }
 } else {
     & $PythonExe (Join-Path $taskDestination 'download_models.py') --verify

@@ -3,7 +3,8 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 profile="${1:-quick}"
 if [[ "$profile" == deepseek ]]; then exec bash "$ROOT/run_deepseek_mlperf.sh" "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-deepseek}"; fi
-case "$profile" in inventory|quick|full|burn|compare) ;; *) echo "Usage: bash run.sh [inventory|quick|full|burn|compare|deepseek] [output-directory]" >&2; exit 2 ;; esac
+if [[ "$profile" == identity || "$profile" == authenticity ]]; then exec python3 "$ROOT/run_authenticity.py" --profile "$profile" --out "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}" --image "${B300_IMAGE:-b300-test:1.0}"; fi
+case "$profile" in inventory|quick|full|burn|compare) ;; *) echo "Usage: bash run.sh [inventory|identity|authenticity|quick|full|burn|compare|deepseek] [output-directory]" >&2; exit 2 ;; esac
 OUT="${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}"
 mkdir -p -- "$OUT"
 OUT="$(cd -- "$OUT" && pwd)"
@@ -95,13 +96,14 @@ telemetry_start=$(python3 -c 'import time; print(time.time())')
     done
 ) > "$OUT/telemetry.csv" 2> "$OUT/telemetry.stderr" &
 monitor_pid=$!
-base=(docker run --rm --pull never --name "$container_name" --network none --gpus all --shm-size=16g
+base=(docker run --rm --pull never --name "$container_name" --label "b300-kit.job=${B300_JOB_ID:-cli-$$}" --network none --gpus all --shm-size=16g
       --ulimit memlock=-1 --ulimit stack=67108864
       -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1
       -e NCCL_DEBUG=INFO -e TORCH_NCCL_ASYNC_ERROR_HANDLING=1
       -v "$ROOT:/kit:ro" -v "$OUT:/out" "$image_id")
 stage() {
     local label="$1"; shift
+    record "$label" RUNNING 0
     echo "===== $label ====="
     local rc=0
     # Long loading of eight model replicas is included in this wall-time limit.
@@ -112,6 +114,7 @@ stage() {
 stage environment environment
 public_stage() {
     local rc=0
+    record nccl-public RUNNING 0
     timeout --signal=TERM --kill-after=30s "${NCCL_PUBLIC_TIMEOUT:-1800}" "${base[@]}" \
         python /kit/public_benchmark.py run --out /out --timeout "${NCCL_PUBLIC_TIMEOUT:-1800}" \
         2>&1 | tee "$OUT/nccl-public-launcher.log" || rc=$?

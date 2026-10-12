@@ -13,7 +13,9 @@ CODE = ["Dockerfile", ".dockerignore", "requirements.txt", "models.json", "model
         "README_使用说明.md", "public_benchmark.py", "public_baselines.json", "build_nccl_tests.py",
         "vendor/nccl-tests-v2.17.6.tar.gz", "vendor/README.md", "deepseek_mlperf.py", "run_deepseek_mlperf.sh",
         "README_DeepSeek_MLPerf.md", "deepseek-model.lock.json", "deepseek_assets.py", "prepare_deepseek_accuracy.py",
-        "README.md", "docs/使用总览.md", "images/runtime.inspect.json", "images/b300-test.tar"]
+        "README.md", "docs/使用总览.md", "authenticity.py", "memory_probe.py", "run_authenticity.py", "dashboard.py", "evidence.py",
+        "dashboard/index.html", "dashboard/app.js", "dashboard/style.css", "docs/可视化验真操作.md", "telemetry_guard.py", "server_probe.py",
+        "images/runtime.inspect.json", "images/b300-test.tar"]
 
 
 def sha(path):
@@ -28,6 +30,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=["seal", "verify", "status"])
     p.add_argument("--root", type=Path, default=ROOT)
+    p.add_argument("--hardware-only", action="store_true", help="Seal/verify runtime+code without Qwen/SDXL weights")
     args = p.parse_args()
     root = args.root.resolve()
     missing = [name for name in CODE if not (root / name).is_file()]
@@ -41,21 +44,27 @@ def main():
             print(f"{m['name']}: {present / 2**30:.2f}/{expected / 2**30:.2f} GiB (size only; not hash verified)")
         print("Missing package files:", ", ".join(missing) or "none")
         print("Sealed:", (root / "bundle.sha256.json").exists())
+        print("Hardware-only sealed:", (root / "hardware.sha256.json").exists())
         return 0
     if missing:
         raise RuntimeError("Offline bundle incomplete: " + ", ".join(missing))
-    models = json.loads((root / "models.lock.json").read_text(encoding="utf-8"))["models"]
-    failures = verify(root, models)
-    if failures:
-        raise RuntimeError("Model files missing/corrupt: " + ", ".join(failures))
+    if not args.hardware_only:
+        models = json.loads((root / "models.lock.json").read_text(encoding="utf-8"))["models"]
+        failures = verify(root, models)
+        if failures:
+            raise RuntimeError("Model files missing/corrupt: " + ", ".join(failures))
     inspect = json.loads((root / "images/runtime.inspect.json").read_text(encoding="utf-8"))[0]
+    seal_path = root / ("hardware.sha256.json" if args.hardware_only else "bundle.sha256.json")
     if args.action == "seal":
-        write_json(root / "bundle.sha256.json", {
+        write_json(seal_path, {
             "schema": 1, "image_id": inspect["Id"], "architecture": inspect["Architecture"],
+            "hardware_only": args.hardware_only,
             "files": {name: sha(root / name) for name in CODE}})
-        print("SEALED: models verified; complete runtime archive present; SHA256 recorded.")
+        print("SEALED: " + ("hardware runtime and code" if args.hardware_only else "models and runtime") + "; SHA256 recorded.")
     else:
-        seal = json.loads((root / "bundle.sha256.json").read_text(encoding="utf-8"))
+        seal = json.loads(seal_path.read_text(encoding="utf-8"))
+        if bool(seal.get('hardware_only', False)) != args.hardware_only:
+            raise RuntimeError('Seal type mismatch')
         if set(seal["files"]) != set(CODE):
             raise RuntimeError("Seal file inventory mismatch")
         for name, expected in seal["files"].items():

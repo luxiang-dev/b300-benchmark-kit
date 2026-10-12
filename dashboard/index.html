@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="离线 B300 身份交叉检查、压力测试、公测对比与证据导出工作台。">
+  <title>B300 验真工作台</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主内容</a>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="B300 工作台首页">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        <span>B300<span class="brand-sub">验真工作台</span></span>
+      </a>
+      <div class="side-label">TEST &amp; VERIFY</div>
+      <nav class="navigation" aria-label="主导航">
+        <a class="nav-link active" href="#overview"><span class="nav-icon">◈</span>工作台<span class="nav-count" id="sideGpuCount">—</span></a>
+        <a class="nav-link" href="#workflow"><span class="nav-icon">⌘</span>测试流程</a>
+        <a class="nav-link" href="#evidence"><span class="nav-icon">▤</span>运行与证据</a>
+        <a class="nav-link" href="#guide"><span class="nav-icon">▦</span>操作说明</a>
+      </nav>
+      <div class="sidebar-host">
+        <div class="side-label">当前测试主机</div>
+        <div class="host-name" id="hostName">等待连接</div>
+        <div class="host-detail" id="hostDetail">Ubuntu 本地服务</div>
+        <div class="connection-pill" id="connectionStatus"><span class="dot"></span><span>连接中</span></div>
+      </div>
+      <div class="sidebar-footer"><span class="lock-icon" aria-hidden="true">▣</span><div>本地执行 · 原始证据<br><small>资源与日志保留在测试主机</small></div></div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar">
+        <div class="breadcrumb">验证实验室 <span>/</span> <strong>B300</strong></div>
+        <div class="topbar-right"><span class="offline-label"><span class="dot"></span>LOCAL CONSOLE</span><span class="endpoint" id="endpoint">127.0.0.1:8765</span><button class="icon-button" id="refreshButton" title="刷新主机状态" aria-label="刷新主机状态">↻</button></div>
+      </header>
+
+      <main id="main">
+        <div class="demo-banner" id="demoBanner" hidden>演示模式 · 所有设备与结果仅用于界面预览，不能作为硬件测试证据。</div>
+        <div class="alert alert-error" id="connectionError" role="status" hidden></div>
+        <div class="alert" id="actionMessage" role="status" hidden></div>
+
+        <section class="overview" id="overview" aria-labelledby="pageTitle">
+          <div class="page-heading"><div><div class="eyebrow"><span></span> HARDWARE ACCEPTANCE</div><h1 id="pageTitle">B300 验真与性能验收</h1><p>从身份一致性到真实负载，每一项结论都保留可复核证据。</p></div><a class="button button-secondary guide-shortcut" href="#guide">开始前的准备 <span aria-hidden="true">↗</span></a></div>
+
+          <div class="metrics-grid">
+            <div class="metric"><span class="metric-label">识别到的 GPU</span><div class="metric-value"><span id="gpuCount">—</span><span class="metric-unit">张</span></div><span class="metric-note" id="gpuCountNote">等待 nvidia-smi 数据</span></div>
+            <div class="metric"><span class="metric-label">HBM 总容量</span><div class="metric-value"><span id="totalMemory">—</span><span class="metric-unit">GiB</span></div><span class="metric-note">驱动报告值 · 非实测可用容量</span></div>
+            <div class="metric"><span class="metric-label">测试运行</span><div class="metric-value"><span id="runCount">0</span><span class="metric-unit">次</span></div><span class="metric-note" id="runCountNote">尚未开始测试</span></div>
+            <div class="metric metric-accent"><span class="metric-label">当前状态</span><div class="metric-value metric-text" id="runStatus">待检查</div><span class="metric-note" id="runStatusNote">先完成主机准备与身份检查</span></div>
+          </div>
+
+          <div class="overview-grid">
+            <section class="panel hardware-panel" aria-labelledby="hardwareTitle"><div class="panel-heading"><h2 id="hardwareTitle"><span class="heading-symbol">◈</span>设备清单</h2><span class="small-tag" id="hardwareTag">实时读取</span></div><div class="gpu-grid" id="gpuGrid"><div class="empty-state"><span class="empty-symbol">◈</span><strong>等待设备信息</strong><p>连接测试主机后显示型号、UUID 和显存。</p></div></div><div class="panel-footnote">型号文字仅是身份检查的一个信号。请继续交叉检查 PCI、架构、显存与真实计算。</div></section>
+            <section class="panel readiness-panel" aria-labelledby="readinessTitle"><div class="panel-heading"><h2 id="readinessTitle"><span class="heading-symbol">⌁</span>运行条件</h2><span class="small-tag" id="readinessTag">预检查</span></div><div id="readinessList" class="readiness-list"></div><div class="image-import-control" id="importImageControl"><button class="button button-secondary button-small" id="importImageButton" disabled>导入离线镜像</button><p id="importImageReason">等待主机状态</p></div><details class="warnings-details" id="warningsDetails" hidden><summary><span id="warningCount">环境提醒</span><span>⌄</span></summary><ul id="warningsList"></ul></details><div class="readiness-note">GPU 测试在 Ubuntu 上执行；Windows 可通过 SSH 转发操作本页面。</div></section>
+          </div>
+        </section>
+
+        <section class="workflow-section" id="workflow" aria-labelledby="workflowTitle">
+          <div class="section-heading"><div><div class="eyebrow">01 — WORKFLOW</div><h2 id="workflowTitle">从检查到验收</h2></div><span class="section-note">建议按顺序执行 · 同时只运行一个任务</span></div>
+          <div class="workflow-steps" id="workflowSteps" aria-label="测试流程状态"></div>
+          <div class="testing-grid">
+            <section class="panel test-picker" aria-labelledby="pickerTitle"><div class="panel-heading"><h3 id="pickerTitle">选择测试项目</h3><span class="small-tag">7 个项目</span></div><div class="profile-list" id="profileList"></div></section>
+            <section class="panel test-detail" aria-labelledby="selectedTitle">
+              <div class="test-detail-top"><span class="selected-kicker" id="selectedCategory">IDENTITY CHECK</span><span class="small-tag" id="selectedRequirements">检测主机</span></div>
+              <h3 id="selectedTitle">身份交叉检查</h3><p class="selected-description" id="selectedDescription"></p>
+              <div class="check-scope" id="selectedScope"></div>
+              <div class="duration-control" id="durationControl" hidden><label for="burnSeconds">持续压力时长</label><select id="burnSeconds"><option value="600">10 分钟 · 初步排查</option><option value="3600" selected>1 小时 · 默认</option><option value="7200">2 小时</option><option value="14400">4 小时</option></select><p>先完成短测试，确认供电与散热正常后再运行长压力。</p></div>
+              <div class="profile-boundary" id="profileBoundary"></div>
+              <div class="test-detail-bottom"><p class="launch-reason" id="launchReason">正在检查运行条件…</p><button class="button button-primary" id="startButton" disabled><span aria-hidden="true">▶</span><span id="startButtonLabel">开始身份检查</span></button></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="evidence-section" id="evidence" aria-labelledby="evidenceTitle">
+          <div class="section-heading"><div><div class="eyebrow">02 — LIVE EVIDENCE</div><h2 id="evidenceTitle">运行与证据</h2></div><span class="section-note" id="lastUpdated">等待首次刷新</span></div>
+          <div class="execution-grid">
+            <section class="panel job-history" aria-labelledby="historyTitle"><div class="panel-heading"><h3 id="historyTitle">运行记录</h3><span class="small-tag" id="historyCount">0</span></div><div id="jobList" class="job-list"><div class="history-empty">开始测试后，运行记录会显示在这里。</div></div></section>
+            <section class="panel job-detail" aria-labelledby="jobTitle"><div class="panel-heading"><div><h3 id="jobTitle">尚无运行任务</h3><p class="job-meta" id="jobMeta">每次测试使用独立目录保存证据</p></div><button class="button button-danger button-small" id="stopButton" hidden>停止任务</button></div><div id="jobOverview"></div><div class="stages-list" id="stagesList"></div><div class="identity-panel" id="identityPanel" hidden><div class="subsection-heading"><h4>身份交叉证据</h4><span>本次采集 · 厂商核验另行完成</span></div><div class="identity-table-wrap" id="identityTable"></div></div><div class="telemetry-panel" id="telemetryPanel" hidden><div class="subsection-heading"><h4 id="telemetryTitle">实时遥测</h4><span>来自实际采样</span></div><div class="telemetry-grid" id="telemetryGrid"></div></div><div id="findingsPanel" hidden></div><div class="logs-section"><div class="subsection-heading"><h4>原始运行日志</h4><button class="text-button" id="copyLogsButton" disabled>复制日志</button></div><pre class="log-output" id="logOutput" tabindex="0" aria-label="原始运行日志">等待测试启动。此处只显示实际执行输出。</pre><div class="log-footnote">显示日志尾部；完整日志与报告可在下方打开或下载。</div></div><div class="artifacts-section" id="artifactsSection" hidden><div class="subsection-heading"><h4>报告与原始文件</h4><span>保留完整文件可复核</span></div><div class="artifacts-grid" id="artifactsGrid"></div></div></section>
+          </div>
+        </section>
+
+        <section class="guide-section" id="guide" aria-labelledby="guideTitle"><div class="section-heading"><div><div class="eyebrow">03 — OPERATOR GUIDE</div><h2 id="guideTitle">全流程操作说明</h2></div><span class="section-note">离线准备 → 本地运行 → 证据导出</span></div>
+          <div class="guide-grid"><div class="panel guide-instructions">
+            <details class="guide-item" open><summary><span class="guide-number">1</span><div>准备 Ubuntu 测试主机<small>推荐 Ubuntu 22.04 / 24.04</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>安装适配 B300 的 NVIDIA 数据中心驱动、Docker 与 NVIDIA Container Toolkit。确认卡空闲、MIG 关闭、ECC 开启；整机测试还需检查 NVSwitch/Fabric 服务。使用能读取内核日志的运维账号。</p><div class="code-block"><code>python3 --version
+nvidia-smi
+docker info</code><button class="copy-code" aria-label="复制主机检查命令">复制</button></div><p class="guide-tip">本工作台面向 8 张物理 B300 整机。NCCL 公测及 DeepSeek TP8/EP8 项目要求卡数与参考条件一致；单卡结果不能直接套用整机参考。</p></div></details>
+            <details class="guide-item"><summary><span class="guide-number">2</span><div>提前准备离线资源<small>下载、构建与校验在有网 Linux 上完成</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>身份与硬件验真不需要大模型权重。先在 CPU 架构相同的有网 Linux 主机准备硬件测试镜像，再复制整个准备包到目标服务器本地 SSD。</p><div class="code-block"><code>bash prepare_offline.sh --hardware-only
+python3 bundle.py verify --hardware-only</code><button class="copy-code" aria-label="复制离线准备命令">复制</button></div><p>在工作台点击“导入离线镜像”，程序先校验归档再导入。Qwen / SDXL 功能测试需要完整基础包，准备时去掉 <code>--hardware-only</code>。</p><p>DeepSeek 单独准备固定官方源码、FP4 权重、数据、准确率环境与镜像，并设置 <code>MLPERF_REPO</code>、<code>MLPERF_SCRATCH_PATH</code>、<code>MLPERF_IMAGE</code>。详见项目里的 <code>README_DeepSeek_MLPerf.md</code>。</p><p class="guide-tip">本页面不会自动下载大模型或拉取镜像。准备不完整时先处理“运行条件”提醒。</p></div></details>
+            <details class="guide-item"><summary><span class="guide-number">3</span><div>启动可视化工作台<small>服务仅监听测试主机本地地址</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>在 Ubuntu 项目目录启动服务。保留终端运行，然后在 Ubuntu 浏览器打开 <code>http://127.0.0.1:8765</code>。</p><div class="code-block"><code id="serverCommand">python3 dashboard.py --port 8765 --image b300-test:1.0</code><button class="copy-code" aria-label="复制工作台启动命令">复制</button></div><p>从 Windows 操作时，在 PowerShell 新开 SSH 隧道，把下方用户名与服务器地址替换成实际值，再在 Windows 浏览器打开相同地址。</p><div class="code-block"><code>ssh -N -L 8765:127.0.0.1:8765 用户名@Ubuntu服务器IP</code><button class="copy-code" aria-label="复制 SSH 隧道命令">复制</button></div><p class="guide-tip">不要关闭服务终端或 SSH 隧道。结束负载时先点击“停止任务”，等待清理完成。</p></div></details>
+            <details class="guide-item"><summary><span class="guide-number">4</span><div>逐层检查真实性与稳定性<small>先检查身份，再执行真实负载</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><ol><li>先运行“身份交叉检查”，复核硬件与驱动提供的多个身份信号。</li><li>运行“真实性负载”，采集服务器清单，抽查 CPU、256 MiB RAM 与 128 MiB 结果盘文件，再验证 GPU 显存、计算与互联；观察每张卡的遥测及错误。</li><li>8 卡整机继续执行“NCCL 公测对比”，检查互联性能与参考数据的测试条件。</li><li>运行“快速功能”或“完整验收”；需要长压力时再运行“持续压力”。</li><li>准备独立资源后可执行 DeepSeek-R1 MLPerf v6.0 Offline，读取性能与准确率两份证据。</li></ol><p class="guide-tip">运行期间保持主机空闲，观察温度、功耗与原始日志。全 RAM、全盘、NIC 远端线速和 OEM 人工验收需另行完成。出现异常时停止，保存日志并排查供电、散热、驱动和硬件。</p></div></details>
+            <details class="guide-item"><summary><span class="guide-number">5</span><div>复核结论并保留证据<small>报告、原始日志与校验清单一起保存</small></div><span class="chevron">⌄</span></summary><div class="guide-body"><p>在“运行与证据”选择本次任务。检查全部阶段、遥测覆盖、ECC/Xid 与报告说明；下载报告、原始文件及证据归档。身份一致性与负载通过可提供较强的软件证据。继续向厂商或供应商核验序列号、部件编号与采购记录，并保留卡/服务器铭牌照片、BMC 清单和厂家回复。将实物信息与本次采集证据逐项对照。</p><div class="status-guide"><span class="status-badge status-pass">PASS</span><span>本次要求的检查通过</span><span class="status-badge status-fail">FAIL</span><span>有失败或明确异常</span><span class="status-badge status-review">REVIEW</span><span>需要人工复核证据</span><span class="status-badge status-incomplete">INCOMPLETE</span><span>未完成全部要求</span></div></div></details>
+          </div><aside class="panel interpretation-panel"><span class="interpretation-icon" aria-hidden="true">◎</span><h3>正确理解测试结论</h3><p>软件检查可以交叉验证身份、架构特征、显存与实际性能，不能代替厂商认证或实物检查。</p><div class="interpretation-divider"></div><h4>公测对比看条件</h4><p>8×B300 的整机结果应使用相同卡数、场景、模型与精度。单卡结果不能直接与 8 卡 MLPerf 或 NCCL 公测比较。</p><h4>只记录实际结果</h4><p>未执行的项目保持待测试；缺失证据不会显示为通过。演示页面始终明确标注。</p><div class="interpretation-footer">软件证据 + 负载验证 + 实物核验</div></aside></div>
+        </section>
+        <footer class="page-footer"><span>B300 验真工作台</span><span>离线运行 · 全过程日志 · 可复核结果</span></footer>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

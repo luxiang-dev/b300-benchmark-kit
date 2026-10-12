@@ -36,10 +36,19 @@ jobs:
           python tools/check_text_files.py
       - name: CPU regressions and Linux launcher integration (mock hardware)
         run: python -m unittest discover -s tests -v
+      - name: Offline dashboard frontend
+        run: |
+          node --check dashboard/app.js
+          node tests/frontend_smoke.js
       - name: CLI smoke checks
         run: |
           python gpu_test.py --help
           python deepseek_mlperf.py --help
           python prepare_deepseek_accuracy.py --help
+          python authenticity.py --help
+          python memory_probe.py --help
+          python run_authenticity.py --help
+          python dashboard.py --help
+          python server_probe.py --help
           python bundle.py status
           python download_models.py --plan
