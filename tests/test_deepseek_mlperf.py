@@ -27,7 +27,7 @@ performance_sample_count : 4388
 accuracy_sample_count : 4388
 No errors encountered during test.
 """
-ACCURACY = "Results\n{'exact_match': 81.10756608933455, 'tokens_per_sample': 3775.6280765724705, 'num-samples': 4388}\n"
+ACCURACY = "Results\n{'exact_match': 81.10756608933455, 'tokens_per_sample': 3500.0, 'num-samples': 4388}\n"
 
 
 def save_evidence(out):
@@ -39,7 +39,13 @@ def save_evidence(out):
     (perf / "mlperf_log_detail.txt").write_text(':::MLLOG {"key": "loadgen_version", "value": "6.0.9 @ synthetic fixture", "metadata": {"is_error": false}}\n', encoding="utf-8")
     (acc / "accuracy.txt").write_text(ACCURACY, encoding="utf-8")
     (acc / "mlperf_log_summary.txt").write_text("Scenario : Offline\nMode : AccuracyOnly\n", encoding="utf-8")
-    (acc / "mlperf_log_accuracy.json").write_text(json.dumps([{"qsl_idx": i, "data": "01000000"} for i in range(4388)]), encoding="utf-8")
+    (acc / "mlperf_log_detail.txt").write_text((perf / "mlperf_log_detail.txt").read_text(encoding="utf-8"), encoding="utf-8")
+    raw = acc / "mlperf_log_accuracy.json"
+    # Full-length synthetic int32 outputs exercise summary/response consistency.
+    with raw.open("w", encoding="utf-8") as stream:
+        stream.write('[\n')
+        for i in range(4388):
+            stream.write(json.dumps({"qsl_idx": i, "data": "01000000" * 3500}) + (',\n' if i < 4387 else '\n]'))
     context = dict(suite="MLPerf Inference v6.0", model="deepseek-r1", scenario="Offline", precision="fp4",
                    gpus=8, nodes=1, tensor_parallelism=8, expert_parallelism=8, speculative_decoding=False,
                    source_revision=ds.SOURCE_REVISION, mlcommons_revision=ds.MLCOMMONS_REVISION)
@@ -81,7 +87,7 @@ class DeepSeekTests(unittest.TestCase):
 
     def test_accuracy_below_threshold_or_incomplete_rejected(self):
         for changed in [ACCURACY.replace("81.10756608933455", "70.0"), ACCURACY.replace("4388", "100"),
-                        ACCURACY.replace("3775.6280765724705", "0"), ACCURACY.replace("3775.6280765724705", "5000"), ACCURACY + ACCURACY]:
+                        ACCURACY.replace("3500.0", "0"), ACCURACY.replace("3500.0", "5000"), ACCURACY + ACCURACY]:
             with self.assertRaises(ValueError):
                 ds.parse_accuracy(changed)
 
@@ -164,7 +170,7 @@ class DeepSeekTests(unittest.TestCase):
         proc.poll.return_value = None
         with patch.object(ds.urllib.request, "urlopen", side_effect=[URLError("not started"), Response()] * 2), \
              patch.object(ds.subprocess, "Popen", return_value=proc) as servers, \
-             patch.object(ds.subprocess, "run", side_effect=[SimpleNamespace(returncode=0), subprocess.CalledProcessError(1, "harness")]), \
+             patch.object(ds, "run_harness_process", side_effect=[None, subprocess.CalledProcessError(1, "harness")]), \
              patch.object(ds, "stop") as stopped:
             ds.run_phase(self.out, self.out, "PerformanceOnly", 10, 10)
             with self.assertRaises(subprocess.CalledProcessError):
@@ -205,6 +211,7 @@ class DeepSeekReportTests(unittest.TestCase):
     tearDown = kit.ReportTests.tearDown
     save = kit.ReportTests.save
     snapshot = kit.ReportTests.snapshot
+    telemetry = kit.ReportTests.telemetry
 
     def require_deepseek(self):
         self.plan.update(profile="deepseek", required=["deepseek-r1-mlperf"])

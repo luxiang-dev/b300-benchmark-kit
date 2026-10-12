@@ -12,7 +12,8 @@ CODE = ["Dockerfile", ".dockerignore", "requirements.txt", "models.json", "model
         "bundle.py", "gpu_test.py", "report.py", "image_constraints.py", "run.sh", "prepare_offline.sh", "copy_to_disk.ps1",
         "README_使用说明.md", "public_benchmark.py", "public_baselines.json", "build_nccl_tests.py",
         "vendor/nccl-tests-v2.17.6.tar.gz", "vendor/README.md", "deepseek_mlperf.py", "run_deepseek_mlperf.sh",
-        "README_DeepSeek_MLPerf.md", "deepseek-model.lock.json", "deepseek_assets.py", "images/runtime.inspect.json", "images/b300-test.tar"]
+        "README_DeepSeek_MLPerf.md", "deepseek-model.lock.json", "deepseek_assets.py", "prepare_deepseek_accuracy.py",
+        "README.md", "docs/使用总览.md", "images/runtime.inspect.json", "images/b300-test.tar"]
 
 
 def sha(path):

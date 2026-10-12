@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Generate a portable HTML/JSON report; missing evidence never becomes PASS."""
 import csv
+from datetime import datetime
 import html
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -73,6 +75,56 @@ def hardware_issues(out):
     if (out / "telemetry.stderr").exists() and (out / "telemetry.stderr").stat().st_size:
         review.append("GPU 遥测出现读取错误，检查 telemetry.stderr。")
     return failures, review
+
+
+def telemetry_evidence(out, plan):
+    failures, review, rows = [], [], []
+    by_gpu, invalid = {}, 0
+    try:
+        expected = set(ecc_snapshot(out / "before.xml"))
+        if len(expected) != plan["gpus"]:
+            raise ValueError("GPU UUID snapshot is incomplete")
+        with (out / "telemetry.csv").open(encoding="utf-8") as stream:
+            for raw in csv.DictReader(stream, skipinitialspace=True):
+                try:
+                    uuid, rank = raw["uuid"].strip(), int(raw["index"])
+                    row = {k: float(raw[k]) for k in ("temperature_c", "power_w", "memory_used_mib", "gpu_util_percent")}
+                    timestamp = datetime.strptime(raw["timestamp"].strip(), "%Y/%m/%d %H:%M:%S.%f").timestamp()
+                    if uuid not in expected or not 0 <= rank < plan["gpus"] or not all(math.isfinite(v) for v in row.values()):
+                        raise ValueError("Invalid UUID, index or non-finite telemetry")
+                    if not 0 < row["temperature_c"] < 120 or min(row["power_w"], row["memory_used_mib"]) < 0 or not 0 <= row["gpu_util_percent"] <= 100:
+                        raise ValueError("Out-of-range telemetry")
+                    rows.append(row)
+                    by_gpu.setdefault(uuid, []).append(dict(row, index=rank, timestamp=timestamp))
+                except (ValueError, KeyError, TypeError):
+                    invalid += 1
+        if set(by_gpu) != expected:
+            review.append("遥测未覆盖全部预期 GPU UUID。")
+        indices = {uuid: {r["index"] for r in samples} for uuid, samples in by_gpu.items()}
+        if any(len(v) != 1 for v in indices.values()) or len({next(iter(v)) for v in indices.values()}) != len(indices):
+            review.append("遥测 GPU UUID 与索引映射不一致。")
+        window = load_json(out / "telemetry-window.json")
+        start, end = float(window["start_epoch"]), float(window["end_epoch"])
+        if not all(math.isfinite(v) for v in (start, end)) or end < start:
+            raise ValueError("Invalid telemetry collection window")
+        for uuid, samples in by_gpu.items():
+            times = [s["timestamp"] for s in samples]
+            if len(times) < 2 or any(b <= a or b - a > 30 for a, b in zip(times, times[1:])) or abs(times[0] - start) > 30 or abs(end - times[-1]) > 30:
+                review.append(f"{uuid}: 遥测采样不足、存在超过 30 秒的间断或未覆盖测试窗口。")
+        if invalid:
+            review.append(f"遥测有 {invalid} 行无效数据。")
+    except Exception as exc:
+        review.append(f"遥测证据不完整: {exc}")
+    limit = float(plan.get("max_gpu_temp", 85))
+    for uuid, samples in by_gpu.items():
+        if max(s["temperature_c"] for s in samples) >= limit:
+            failures.append(f"{uuid}: 遥测温度达到停止阈值 {limit:g}°C。")
+    summary = dict(samples=len(rows), invalid_samples=invalid,
+                   peak_temperature_c=max((x["temperature_c"] for x in rows), default=None),
+                   peak_power_w=max((x["power_w"] for x in rows), default=None),
+                   per_gpu={uuid: dict(samples=len(samples), peak_temperature_c=max(r["temperature_c"] for r in samples),
+                                      peak_power_w=max(r["power_w"] for r in samples)) for uuid, samples in by_gpu.items()})
+    return summary, failures, review
 
 
 def generate(out):
@@ -152,28 +204,25 @@ def generate(out):
     failures += parse_errors
     failures += [f"{x['name']}: 退出码 {x['exit_code']}" for x in stages if x["status"] == "FAIL"]
     failures += [f"{x['file']}: {x.get('error', '测试失败')}" for x in results if x.get("status") != "PASS"]
-    telemetry = []
-    if (out / "telemetry.csv").exists():
-        with (out / "telemetry.csv").open(encoding="utf-8", errors="replace") as f:
-            for row in csv.DictReader(f, skipinitialspace=True):
-                try:
-                    telemetry.append({k: float(row[k]) for k in ("temperature_c", "power_w", "gpu_util_percent")})
-                except (ValueError, KeyError, TypeError):
-                    continue
-        if not telemetry:
-            review.append("遥测没有可解析的采样数据。")
+    telemetry, tfailures, treview = telemetry_evidence(out, plan)
+    failures += tfailures
+    review += treview
     overall = "FAIL" if failures else "INCOMPLETE" if incomplete else "REVIEW" if review else "PASS"
     summary = dict(overall=overall, profile=plan["profile"], expected_gpus=plan["gpus"], stages=stages,
                    failures=failures, incomplete=incomplete, review=review, results=results, public_comparison=public,
-                   telemetry=dict(samples=len(telemetry),
-                       peak_temperature_c=max((x["temperature_c"] for x in telemetry), default=None),
-                       peak_power_w=max((x["power_w"] for x in telemetry), default=None)))
-    (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                   telemetry=telemetry)
+    (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False) + "\n", encoding="utf-8")
     esc = lambda value: html.escape(str(value))
     table = "".join(f"<tr><td>{esc(x['name'])}</td><td>{esc(x['status'])}</td><td>{x['exit_code']}</td></tr>" for x in stages)
     details = "".join(f"<details><summary>{esc(x['test'])} · GPU {x['rank']} · {esc(x['status'])}</summary><pre>{esc(json.dumps(x, indent=2, ensure_ascii=False))}</pre></details>" for x in results)
     images = "".join(f'<a href="{esc(p.name)}"><img src="{esc(p.name)}" alt="{esc(p.name)}"></a>' for p in sorted(out.glob("sdxl-gpu*.png")))
     notes = "".join(f"<li>{esc(x)}</li>" for x in failures + incomplete + review)
+    explanation = ("DeepSeek-R1 使用完整 FP4 模型、TP8/EP8，显示 MLPerf v6.0 Offline 整机输出 Tokens/s。"
+                   "性能与准确率各启动新的 endpoint；准确率响应、长度和原始日志须通过验证。公测差距仅为性能参考，本地复现未完成审计或认证。"
+                   if plan["profile"] == "deepseek" else
+                   "LLM 是 8 个独立副本，吞吐包含预填充与解码，未测首 Token 延迟，也未使用张量并行。SDXL 按每卡记录生成时间。"
+                   "GEMM 是 BF16 合成负载；PyTorch NCCL 使用 MAX 性能测量与 SUM 正确性检查。nccl-public 单独使用官方 FP32 SUM all_reduce_perf 口径。"
+                   "带宽不能直接证明流量走了 NVLink；应对照同型号、同软件、同功耗配置的基线。")
     page = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>B300 8卡测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
 <h1>NVIDIA B300 · 8卡测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
@@ -182,7 +231,7 @@ def generate(out):
 {public_benchmark.render(public)}
 <section><h2>遥测</h2><pre>{esc(json.dumps(summary['telemetry'],indent=2,ensure_ascii=False))}</pre><p>完整采样见 telemetry.csv；PCIe/NVLink 拓扑见 topology.txt 和 nvlink.txt。</p></section>
 <section><h2>图像输出</h2>{images}</section><h2>每卡结果与模型输出</h2>{details}
-<section><h2>指标解释</h2><p>LLM 是 8 个独立副本，吞吐包含预填充与解码，未测首 Token 延迟，也未使用张量并行。SDXL 按每卡记录生成时间。GEMM 是 BF16 合成负载；NCCL 是 MAX all-reduce 性能加 SUM 正确性检查，带宽不能直接证明流量走了 NVLink。无统一厂商阈值时，应对照同型号、同软件、同功耗配置的基线。</p></section></html>'''
+<section><h2>指标解释</h2><p>{esc(explanation)}</p></section></html>'''
     (out / "report.html").write_text(page, encoding="utf-8")
     return summary
 

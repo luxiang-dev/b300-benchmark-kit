@@ -1,5 +1,6 @@
 """CPU-only fault-injection tests; does not simulate GPU benchmark results."""
 import hashlib
+from datetime import datetime
 import io
 import json
 from pathlib import Path
@@ -97,7 +98,14 @@ class ReportTests(unittest.TestCase):
         self.snapshot("before.xml", 0)
         self.snapshot("after.xml", 0)
         (self.out / "kernel-during.log").write_text("kernel: normal test-window event\n", encoding="utf-8")
-        (self.out / "telemetry.csv").write_text("timestamp,index,uuid,temperature_c,power_w,memory_used_mib,gpu_util_percent\nnow,0,gpu0,50,500,1000,98\n", encoding="utf-8")
+        self.telemetry()
+
+    def telemetry(self):
+        rows = [f"2026/10/12 10:00:0{second}.000,{rank},gpu{rank},50,500,1000,98\n"
+                for second in (0, 2) for rank in range(8)]
+        (self.out / "telemetry.csv").write_text("timestamp,index,uuid,temperature_c,power_w,memory_used_mib,gpu_util_percent\n" + "".join(rows), encoding="utf-8")
+        start = datetime(2026, 10, 12, 10, 0, 0).timestamp()
+        self.save("telemetry-window.json", dict(start_epoch=start, end_epoch=start+3))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -151,6 +159,22 @@ class ReportTests(unittest.TestCase):
         self.snapshot("before.xml", 1)
         self.snapshot("after.xml", 1)
         self.assertEqual(report.generate(self.out)["overall"], "REVIEW")
+
+    def test_missing_partial_nonfinite_or_interrupted_telemetry_requires_review(self):
+        path = self.out / "telemetry.csv"
+        valid = path.read_text(encoding="utf-8")
+        for raw in ("", "\n".join(line for line in valid.splitlines() if 'gpu7' not in line),
+                    valid.replace(',50,500,', ',nan,500,'), valid.replace('10:00:02', '10:01:02')):
+            with self.subTest(raw=raw[:50]):
+                path.write_text(raw, encoding="utf-8")
+                self.assertEqual(report.generate(self.out)["overall"], "REVIEW")
+        path.unlink()
+        self.assertEqual(report.generate(self.out)["overall"], "REVIEW")
+
+    def test_telemetry_overheat_fails_otherwise_successful_run(self):
+        path = self.out / "telemetry.csv"
+        path.write_text(path.read_text(encoding="utf-8").replace(',50,500,', ',90,500,'), encoding="utf-8")
+        self.assertEqual(report.generate(self.out)["overall"], "FAIL")
 
 
 class BundleTests(unittest.TestCase):

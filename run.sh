@@ -10,6 +10,7 @@ OUT="$(cd -- "$OUT" && pwd)"
 [[ ! -e "$OUT/plan.json" && ! -e "$OUT/stages.tsv" ]] || { echo "Use a new result directory" >&2; exit 1; }
 for c in nvidia-smi python3; do command -v "$c" >/dev/null || { echo "Missing $c" >&2; exit 1; }; done
 monitor_pid=""
+telemetry_start=""
 container_name="b300-test-$$-$(date +%s)"
 export ROOT OUT PROFILE="$profile"
 python3 - <<'PY'
@@ -20,14 +21,27 @@ required=[] if p=='inventory' else ['environment','stress','nccl','llm-Qwen3-0.6
 if p in ('full','burn'): required += ['llm-Qwen3-8B','dcgm']
 if p in ('full','burn','compare'): required += ['nccl-public']
 if p=='compare': required=['environment','nccl-public']
-Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':8,'required':required}),encoding='utf-8')
+limit=int(os.environ.get('MAX_GPU_TEMP','85'))
+if not 1 <= limit < 120: raise ValueError('MAX_GPU_TEMP must be an integer from 1 to 119')
+Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':8,'required':required,'max_gpu_temp':limit}),encoding='utf-8')
 PY
 cp -- "$ROOT/public_baselines.json" "$OUT/public-baselines.json"
 record() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$OUT/stages.tsv"; }
 cleanup() {
     original=$?
     trap - EXIT ERR
-    if [[ -n "$monitor_pid" ]]; then kill "$monitor_pid" 2>/dev/null || true; wait "$monitor_pid" 2>/dev/null || true; fi
+    if [[ -n "$monitor_pid" ]]; then
+        if ! kill -0 "$monitor_pid" 2>/dev/null; then record telemetry FAIL 1; (( original != 0 )) || original=1; fi
+        kill "$monitor_pid" 2>/dev/null || true
+        wait "$monitor_pid" 2>/dev/null || true
+    fi
+    if [[ -n "$telemetry_start" ]]; then
+        python3 - "$OUT" "$telemetry_start" <<'PY'
+import json,sys,time
+from pathlib import Path
+Path(sys.argv[1],'telemetry-window.json').write_text(json.dumps({'start_epoch':float(sys.argv[2]),'end_epoch':time.time()}),encoding='utf-8')
+PY
+    fi
     if command -v docker >/dev/null; then docker stop --time 10 "$container_name" >/dev/null 2>&1 || true; fi
     nvidia-smi -q -x > "$OUT/after.xml" 2> "$OUT/after.stderr" || true
     journalctl -k --since "@$start_epoch" --no-pager > "$OUT/kernel-during.log" 2> "$OUT/kernel.stderr" || true
@@ -50,12 +64,12 @@ nvidia-smi > "$OUT/nvidia-smi.txt"
 [[ "$profile" != inventory ]] || exit 0
 for c in docker timeout; do command -v "$c" >/dev/null || { record preflight FAIL 1; echo "Missing $c" >&2; exit 1; }; done
 python3 - <<'PY'
-import os,subprocess,xml.etree.ElementTree as ET
+import os,re,subprocess,xml.etree.ElementTree as ET
 from pathlib import Path
 gpus=ET.parse(Path(os.environ['OUT'],'before.xml')).getroot().findall('gpu')
 assert len(gpus)==8, f'Expected 8 GPUs, found {len(gpus)}'
 for g in gpus:
-    assert 'B300' in g.findtext('product_name',''), 'GPU model is not B300'
+    assert re.search(r'\bB300\b',g.findtext('product_name','')), 'GPU model is not B300'
     assert g.findtext('mig_mode/current_mig','Disabled') in ('Disabled','N/A'), 'Disable MIG before running this physical-GPU suite'
     assert g.findtext('ecc_mode/current_ecc','Enabled') in ('Enabled','N/A'), 'Enable ECC before an acceptance test'
 driver=ET.parse(Path(os.environ['OUT'],'before.xml')).getroot().findtext('driver_version','0')
@@ -72,6 +86,7 @@ if ! docker image inspect "$image_id" >/dev/null 2>&1; then docker load -i "$ROO
 docker image inspect "$image_id" > "$OUT/image-used.json"
 record preflight PASS 0
 # Background telemetry is retained even if a test fails.
+telemetry_start=$(python3 -c 'import time; print(time.time())')
 (
     printf 'timestamp,index,uuid,temperature_c,power_w,memory_used_mib,gpu_util_percent\n'
     while true; do
@@ -80,7 +95,7 @@ record preflight PASS 0
     done
 ) > "$OUT/telemetry.csv" 2> "$OUT/telemetry.stderr" &
 monitor_pid=$!
-base=(docker run --rm --name "$container_name" --network none --gpus all --shm-size=16g
+base=(docker run --rm --pull never --name "$container_name" --network none --gpus all --shm-size=16g
       --ulimit memlock=-1 --ulimit stack=67108864
       -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_HUB_DISABLE_TELEMETRY=1
       -e NCCL_DEBUG=INFO -e TORCH_NCCL_ASYNC_ERROR_HANDLING=1

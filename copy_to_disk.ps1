@@ -17,7 +17,7 @@ if (-not $AllowIncomplete) {
     Write-Warning 'Copying an incomplete preparation folder. It is not ready for an offline server.'
 }
 $taskFiles = @(Get-ChildItem -LiteralPath $taskSource -Recurse -File -Force | Where-Object {
-    $_.Name -notmatch '\.(part|tmp|pyc)$' -and $_.FullName -notmatch '[\\/](__pycache__|tests|demo-report|public-reference-preview)[\\/]'
+    $_.Name -notmatch '\.(part|tmp|pyc)$' -and $_.FullName -notmatch '[\\/](\.git|\.github|__pycache__|tests|b300-results|demo-report|public-reference-preview)[\\/]'
 })
 $taskBytes = ($taskFiles | Measure-Object -Property Length -Sum).Sum
 $taskDrive = Get-PSDrive -Name $taskVolumeRoot.Substring(0,1) -PSProvider FileSystem

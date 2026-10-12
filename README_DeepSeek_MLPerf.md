@@ -78,10 +78,13 @@ setup = Path('3rdparty/mlc-inference/language/deepseek-r1/submodules/prm800k/set
 setup.write_text(''.join(line for line in setup.read_text().splitlines(keepends=True) if 'import numpy' not in line))
 ensure_venv_ready(Path('/work/.dsr1-acc-venv'), Path('code/deepseek-r1/tensorrt/requirements.accuracy.txt'))
 PY
+python3 /kit/prepare_deepseek_accuracy.py --workspace /submission/closed/NVIDIA --warm-evaluator
 python3 /kit/deepseek_mlperf.py check --workspace /submission/closed/NVIDIA
 ```
 
-`check` 会逐文件校验约 395 GiB 模型数据，需要读取完整权重；再检查数据规模、固定源码、准确率环境 marker、运行依赖和 8 张 B300。必须在目标 GPU 环境通过预检。源码、模型、数据与 `.dsr1-acc-venv` 保留在挂载目录；系统级安装保留到最终镜像。退出准备容器后：
+新增准备入口会将固定版本本地 tokenizer 元数据复制到 `build/hf-cache/hub` 的对应 Hub snapshot，校验源哈希；`--warm-evaluator` 联网加载官方 PRM 数学检查器及 LiveCodeBench 数据缓存。不要省略 LiveCodeBench 缓存，官方准确率流程会使用它。运行时固定使用 `build/hf-cache`，关闭 HF Hub、Transformers 和 datasets 联网。
+
+`check` 先在准确率 venv 中以离线模式实际加载固定 tokenizer、PRM 数学检查器及 LiveCodeBench，再检查固定源码、数据 int32 格式与原始 pickle 的逐样本对应、运行依赖和 8 张 B300，最后逐文件读取并校验约 395 GiB 权重。必须在目标 GPU 环境通过预检。源码、模型、数据、缓存与 `.dsr1-acc-venv` 保留在挂载目录；系统级安装保留到最终镜像。退出准备容器后：
 
 ```bash
 docker commit b300-deepseek-prepare b300-deepseek-mlperf:6.0
@@ -89,7 +92,20 @@ docker image inspect b300-deepseek-mlperf:6.0 > deepseek-runtime.inspect.json
 docker save -o b300-deepseek-mlperf.tar b300-deepseek-mlperf:6.0
 ```
 
-外置盘需同时携带：本测试包、完整官方仓库（包括 `.git`、`3rdparty` 和 `.dsr1-acc-venv`）、scratch 模型/数据目录、镜像 tar 与 inspect JSON。原包 `bundle.py verify` 不校验这些外部扩展资源。复制后保持 scratch 的绝对路径或在联网准备阶段重新创建链接；Python 环境必须使用同一容器内 `/work` 路径。先用 `--network none` 完成一次预检，确保不会在现场补下载依赖。
+外置盘需同时携带：本测试包、完整官方仓库（包括 `.git`、`3rdparty` 和 `.dsr1-acc-venv`）、scratch 模型/数据目录（包括 hf-cache）、镜像 tar 与 inspect JSON。原包 `bundle.py verify` 不校验这些外部扩展资源。Linux 源码/venv 依赖符号链接与执行权限；推荐直接使用 ext4/XFS，若经 exFAT 搬运则先在 Linux 将完整仓库和 scratch 打包为 tar，再到目标 Linux 文件系统解包。复制后保持 scratch 的绝对路径；Python 环境必须使用同一容器内 `/work` 路径。源码和 scratch 路径不要有空格或冒号。
+
+在最终镜像验证完全断网预检（按实际目录设置变量）：
+
+```bash
+docker run --rm --pull never --network none --gpus all --shm-size=32g \
+  --entrypoint /bin/bash \
+  -e MLPERF_SCRATCH_PATH="$MLPERF_SCRATCH_PATH" \
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 \
+  -v "$MLPERF_REPO:/submission" -v "$MLPERF_REPO/closed/NVIDIA:/work" \
+  -v "$MLPERF_SCRATCH_PATH:$MLPERF_SCRATCH_PATH" -v "$KIT:/kit:ro" \
+  -w /submission/closed/NVIDIA b300-deepseek-mlperf:6.0 \
+  -c 'exec python3 /kit/deepseek_mlperf.py check --workspace /submission/closed/NVIDIA'
+```
 
 ## 4. 在 8×B300 Linux 服务器运行
 
@@ -109,6 +125,6 @@ bash /data/b300-usb-kit/run.sh deepseek /data/b300-results/deepseek-001
 
 只有固定版本、完整模型 FP4、单节点 8 GPU、TP8/EP8、Offline，且两个阶段成功、原始证据 SHA256 一致时才比较吞吐。性能摘要必须 `VALID`、满足时长与查询约束、配置最低时长 600000 ms、至少 105312 条 issued samples，以及完整 4388 条 QSL。
 
-准确率必须覆盖 4388 个唯一 QSL 索引、有生成 token 响应，并通过官方准确率执行流程；适配器另外复核 `exact_match >= 81.3582 × 0.99 = 80.544618`，平均输出长度位于 `3886.2274 × [0.9, 1.1]`。[v6.0 官方判定常量](https://github.com/mlcommons/inference/blob/175ea7ba24a826946458f72ec4a2221215f52802/tools/submission/submission_checker/constants.py)。日志缺失/损坏/缩短运行/不同模型或精度均不会计算百分比。
+准确率必须覆盖 4388 个唯一整数 QSL 索引，响应为合法词表范围的小端 int32 token，原始平均 token 长度与 accuracy.txt 一致，并通过官方准确率执行流程；性能和准确率 detail 都必须记录 v6.0 LoadGen 且无错误事件。适配器另外复核 `exact_match >= 81.3582 × 0.99 = 80.544618`，平均输出长度位于 `3886.2274 × [0.9, 1.1]`。[v6.0 官方判定常量](https://github.com/mlcommons/inference/blob/175ea7ba24a826946458f72ec4a2221215f52802/tools/submission/submission_checker/constants.py)。日志缺失/损坏/缩短运行/不同模型或精度均不会计算百分比。
 
 报告显示整机 Tokens/s、公测 70325.7、本次/公测及差距，不把单卡值乘 8。公测性能偏差不自动判为硬件故障；软件、CPU、功耗、拓扑和权重版本差异需结合报告核对。未运行时保留 `REFERENCE_ONLY`，不会用 Qwen 吞吐代替本项目。

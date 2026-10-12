@@ -1,0 +1,41 @@
+name: Ubuntu validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cpu-and-launchers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: '3.10'
+          - os: ubuntu-24.04
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install CPU test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Shell syntax and line endings
+        run: |
+          bash -n run.sh
+          bash -n run_deepseek_mlperf.sh
+          bash -n prepare_offline.sh
+          python tools/check_text_files.py
+      - name: CPU regressions and Linux launcher integration (mock hardware)
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke checks
+        run: |
+          python gpu_test.py --help
+          python deepseek_mlperf.py --help
+          python prepare_deepseek_accuracy.py --help
+          python bundle.py status
+          python download_models.py --plan

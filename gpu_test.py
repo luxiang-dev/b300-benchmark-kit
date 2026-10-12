@@ -4,6 +4,7 @@ import argparse
 from datetime import timedelta
 import json
 import os
+import re
 from pathlib import Path
 import statistics
 import subprocess
@@ -31,7 +32,7 @@ def setup(args):
         raise RuntimeError(f"Expected {args.gpus} visible GPUs/processes, got {torch.cuda.device_count()}/{world}")
     torch.cuda.set_device(rank)
     props = torch.cuda.get_device_properties(rank)
-    if "B300" not in props.name:
+    if not re.search(r"\bB300\b", props.name):
         raise RuntimeError(f"Expected B300, found {props.name}")
     dist.init_process_group("nccl", timeout=timedelta(minutes=10), device_id=torch.device(f"cuda:{rank}"))
     return torch, dist, rank, world

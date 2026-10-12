@@ -187,6 +187,7 @@ class PublicReportTests(unittest.TestCase):
     tearDown = kit.ReportTests.tearDown
     save = kit.ReportTests.save
     snapshot = kit.ReportTests.snapshot
+    telemetry = kit.ReportTests.telemetry
 
     def require_public(self):
         self.plan["required"].append("nccl-public")

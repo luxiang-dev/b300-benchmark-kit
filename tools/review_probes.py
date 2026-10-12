@@ -39,7 +39,10 @@ def response_probe():
         ds.write_json(raw, [{"qsl_idx": i, "data": "01"} for i in range(4388)])
         result["evidence_sha256"][raw.relative_to(out).as_posix()] = ds.sha(raw)
         ds.write_json(out / "deepseek-mlperf.json", result)
-        accepted = ds.load_evidence(out) is not None
+        try:
+            accepted = ds.load_evidence(out) is not None
+        except ValueError:
+            accepted = False
         return {"one_byte_instead_of_int32_responses_accepted": accepted}
 
 
@@ -55,7 +58,7 @@ def config_environment_probe():
          patch.dict(ds.os.environ, {"CONFIG_DIR": "/synthetic/external-configs"}), \
          patch.object(ds.urllib.request, "urlopen", side_effect=[URLError("not started"), Response()]), \
          patch.object(ds.subprocess, "Popen", return_value=process) as launch, \
-         patch.object(ds.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
+         patch.object(ds, "run_harness_process"), \
          patch.object(ds, "stop"):
         ds.run_phase(Path(tmp), Path(tmp), "PerformanceOnly", 10, 10)
         return {"unchecked_config_dir_inherited_by_server": launch.call_args.kwargs["env"].get("CONFIG_DIR"),
@@ -65,63 +68,17 @@ def config_environment_probe():
 def dataset_probe():
     import numpy as np
     with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as tmp:
-        root = Path(tmp)
-        workspace = root / "submission"
-        required = ["Makefile", str(ds.CONFIG), "code/deepseek-r1/tensorrt/generation_config.json",
-                    "3rdparty/mlc-inference/loadgen/mlperf.conf",
-                    "3rdparty/mlc-inference/language/deepseek-r1/eval_accuracy.py",
-                    "3rdparty/mlc-inference/language/deepseek-r1/submodules/prm800k/setup.py",
-                    "3rdparty/mlc-inference/tools/submission/submission_checker/constants.py",
-                    "code/deepseek-r1/tensorrt/requirements.accuracy.txt",
-                    str(ds.ORIGINAL / "config.json"), str(ds.ORIGINAL / "tokenizer.json"),
-                    str(ds.ORIGINAL / "tokenizer_config.json"), str(ds.MODEL / "hf_quant_config.json"),
-                    "build/data/deepseek-r1/mlperf_deepseek_r1_dataset_4388_fp8_eval.pkl"]
-        for name in required:
-            target = workspace / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text("{}", encoding="utf-8")
-        ds.write_json(workspace / ds.MODEL / "config.json",
-                      {"model_type": "deepseek_v3", "num_hidden_layers": 61, "n_routed_experts": 256})
-        ds.write_json(workspace / ds.MODEL / "model.safetensors.index.json",
-                      {"weight_map": {"synthetic": "synthetic.safetensors"}})
-        (workspace / ds.MODEL / "synthetic.safetensors").write_bytes(b"synthetic")
-        (workspace / "3rdparty/trtllm").mkdir()
+        workspace = Path(tmp)
         (workspace / ds.DATA).mkdir(parents=True)
-        # Deliberately invalid shape, dtype, lengths and token content.
-        np.save(workspace / ds.DATA / "input_ids_padded.npy", np.full((4388, 1), np.nan))
-        np.save(workspace / ds.DATA / "input_lens.npy", np.full(4388, -1, dtype=np.int64))
-        venv = root / "synthetic-venv"
-        (venv / "bin").mkdir(parents=True)
-        (venv / "bin/python3").write_bytes(b"synthetic")
-        (venv / ".requirements_hash").write_text(
-            ds.sha(workspace / "code/deepseek-r1/tensorrt/requirements.accuracy.txt"))
-        fake_code = ModuleType("code")
-        fake_code.__path__ = []
-        common = ModuleType("code.common")
-        common.__path__ = []
-        mlcommons = ModuleType("code.common.mlcommons")
-        mlcommons.loadgen = SimpleNamespace(_vstr="v6.0", model_config={"accuracy-target": {"deepseek-r1": []}})
-        torch = ModuleType("torch")
-        torch.cuda = SimpleNamespace(device_count=lambda: 8, get_device_name=lambda i: "NVIDIA B300")
-        torch.version = SimpleNamespace(cuda="synthetic")
-        torch.__version__ = "synthetic"
-        def path_factory(value):
-            return venv if str(value) == "/work/.dsr1-acc-venv" else Path(value)
-        original_sys_path = sys.path[:]
+        np.save(workspace / ds.DATA / 'input_ids_padded.npy', np.full((4388, 1), np.nan))
+        np.save(workspace / ds.DATA / 'input_lens.npy', np.full(4388, -1, dtype=np.int64))
         try:
-            with patch.object(ds, "Path", side_effect=path_factory), \
-                 patch.object(deepseek_assets, "verify", return_value=[]), \
-                 patch.object(ds.subprocess, "check_output", side_effect=[ds.SOURCE_REVISION, ds.MLCOMMONS_REVISION]), \
-                 patch.object(ds.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
-                 patch.dict(sys.modules, {"code": fake_code, "code.common": common,
-                                         "code.common.mlcommons": mlcommons, "torch": torch}), \
-                 patch("builtins.print"), \
-                 patch.object(ds.importlib, "import_module", return_value=SimpleNamespace(__version__="synthetic")):
-                ds.check(workspace)
-                return {"nan_float64_inputs_4388_by_1_and_negative_lengths_accepted": True,
-                        "note": "External assets, Git and GPU conditions mocked; actual dataset validation executed."}
-        finally:
-            sys.path[:] = original_sys_path
+            ds.validate_dataset(workspace, 129280)
+            accepted = True
+        except RuntimeError:
+            accepted = False
+        return {'nan_float64_inputs_4388_by_1_and_negative_lengths_accepted': accepted,
+                'note': 'Actual dataset validator executed on explicitly synthetic malformed arrays.'}
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import re
+import struct
 import signal
 import subprocess
 import sys
@@ -27,6 +28,8 @@ DATA = Path("build/preprocessed_data/deepseek-r1")
 REFERENCE_ACCURACY = 81.3582
 REFERENCE_OUTPUT_LENGTH = 3886.2274
 BASE_ARGS = "--benchmarks=deepseek-r1 --scenarios=Offline --core_type=trtllm_endpoint"
+TOKENIZER_REVISION = "56d4cbbb4d29f4355bab4b9a39ccb717a14ad5ad"
+RAW_DATA = Path("build/data/deepseek-r1/mlperf_deepseek_r1_dataset_4388_fp8_eval.pkl")
 
 
 def read_json(path):
@@ -121,6 +124,77 @@ def only_file(folder, name):
     return matches[0]
 
 
+def validate_responses(entries, accuracy, samples=4388, vocab_size=129280):
+    if not isinstance(entries, list) or len(entries) != samples:
+        raise ValueError("Raw accuracy responses must cover the complete QSL")
+    seen, tokens = set(), 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Invalid accuracy response object")
+        idx, data = entry.get("qsl_idx"), entry.get("data")
+        if type(idx) is not int or not 0 <= idx < samples or idx in seen:
+            raise ValueError("Raw accuracy responses require unique integer QSL indices")
+        seen.add(idx)
+        if not isinstance(data, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{8})+", data):
+            raise ValueError("Accuracy response must contain nonempty int32 token data")
+        count = len(data) // 8
+        if count > 20000:
+            raise ValueError("Accuracy response exceeds the official output token limit")
+        if any(not 0 <= token < vocab_size for (token,) in struct.iter_unpack("<i", bytes.fromhex(data))):
+            raise ValueError("Accuracy response contains out-of-vocabulary tokens")
+        tokens += count
+    if not math.isclose(tokens / samples, accuracy["tokens_per_sample"], rel_tol=1e-8, abs_tol=1e-6):
+        raise ValueError("Raw token lengths disagree with the official accuracy summary")
+
+
+def validate_dataset(workspace, vocab_size):
+    """Check official preprocessing output against the trusted MLCommons source pickle."""
+    import numpy as np
+    import pandas as pd
+    lengths = np.load(workspace / DATA / "input_lens.npy", mmap_mode="r", allow_pickle=False)
+    inputs = np.load(workspace / DATA / "input_ids_padded.npy", mmap_mode="r", allow_pickle=False)
+    if lengths.shape != (4388,) or inputs.shape != (4388, 3140) or lengths.dtype != np.int32 or inputs.dtype != np.int32:
+        raise RuntimeError("Dataset requires int32 shapes (4388,) and (4388, 3140)")
+    if np.any(lengths <= 0) or np.any(lengths > 3140) or np.any(inputs < 0) or np.any(inputs >= vocab_size):
+        raise RuntimeError("Invalid dataset input lengths or token IDs")
+    # Only use a pickle obtained from the official downloader: pickle is executable.
+    raw = pd.read_pickle(workspace / RAW_DATA)
+    if len(raw) != 4388 or not {"tok_input", "tok_input_len"}.issubset(raw.columns):
+        raise RuntimeError("Raw MLCommons dataset has an invalid schema")
+    for i, (tokens, length) in enumerate(zip(raw["tok_input"], raw["tok_input_len"])):
+        if length != lengths[i] or len(tokens) != lengths[i] or not np.array_equal(inputs[i, :lengths[i]], tokens):
+            raise RuntimeError(f"Preprocessed sample {i} does not match the raw dataset")
+        if np.any(inputs[i, lengths[i]:] != 1):
+            raise RuntimeError(f"Sample {i} requires the official EOS=1 padding")
+
+
+def accuracy_environment(workspace, venv=None):
+    venv = Path(venv) if venv else Path("/work/.dsr1-acc-venv")
+    marker = venv / ".requirements_hash"
+    if not (venv / "bin/python3").is_file() or not marker.is_file() or marker.read_text().strip() != sha(workspace / "code/deepseek-r1/tensorrt/requirements.accuracy.txt"):
+        raise RuntimeError("Prepare the official /work/.dsr1-acc-venv before going offline")
+    env = {**os.environ, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
+           "HF_DATASETS_OFFLINE": "1",
+           "HF_HOME": str(workspace / "build/hf-cache"),
+           "HF_HUB_CACHE": str(workspace / "build/hf-cache/hub"),
+           "HF_DATASETS_CACHE": str(workspace / "build/hf-cache/datasets")}
+    env.pop("TRANSFORMERS_CACHE", None)
+    # Exercise imports and the same repository-name lookup used by the official evaluator.
+    script = """import runpy, sys
+from transformers import AutoTokenizer
+import datasets, numpy, pandas, pylatexenc
+evaluation = runpy.run_path(sys.argv[1], run_name='offline_dependency_check')
+assert evaluation['evaluate_math500']('2', '2')
+assert evaluation['load_lcb_benchmark']()
+tok = AutoTokenizer.from_pretrained('deepseek-ai/DeepSeek-R1', revision=sys.argv[2],
+    use_fast=False, model_max_length=22000, padding_side='left', local_files_only=True)
+assert tok.encode('offline tokenizer check')
+"""
+    subprocess.run([str(venv / "bin/python3"), "-c", script,
+                    str(workspace / "3rdparty/mlc-inference/language/deepseek-r1/eval_accuracy.py"),
+                    TOKENIZER_REVISION], cwd=workspace, env=env, timeout=120, check=True)
+
+
 def load_evidence(out):
     """Only the adapter's successful run with intact raw performance+accuracy logs can compare."""
     out = Path(out).resolve()
@@ -146,19 +220,18 @@ def load_evidence(out):
     accuracy = only_file(out / "deepseek-accuracy", "accuracy.txt")
     accuracy_log = only_file(out / "deepseek-accuracy", "mlperf_log_accuracy.json")
     accuracy_summary = only_file(out / "deepseek-accuracy", "mlperf_log_summary.txt")
-    required = [perf, detail, accuracy, accuracy_log, accuracy_summary]
+    accuracy_detail = only_file(out / "deepseek-accuracy", "mlperf_log_detail.txt")
+    required = [perf, detail, accuracy, accuracy_log, accuracy_summary, accuracy_detail]
     if any(p.relative_to(out).as_posix() not in result["evidence_sha256"] or p.stat().st_size == 0 for p in required):
         raise ValueError("Missing mandatory DeepSeek performance/accuracy evidence hashes")
     atext = accuracy_summary.read_text(encoding="utf-8")
     if field(atext, "Scenario") != "Offline" or field(atext, "Mode") != "AccuracyOnly":
         raise ValueError("Expected separate Offline AccuracyOnly run")
-    entries = read_json(accuracy_log)
-    if not isinstance(entries, list) or len(entries) != 4388 or {e.get("qsl_idx") for e in entries} != set(range(4388)):
-        raise ValueError("Raw accuracy responses do not cover all 4388 unique QSL samples")
-    if any(not isinstance(e.get("data"), str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2})+", e["data"]) for e in entries):
-        raise ValueError("Missing/invalid generated token data in accuracy responses")
+    parsed_accuracy = parse_accuracy(accuracy.read_text(encoding="utf-8"))
+    validate_responses(read_json(accuracy_log), parsed_accuracy)
+    parse_detail(accuracy_detail)
     return dict(performance=parse_performance(perf.read_text(encoding="utf-8")),
-                accuracy=parse_accuracy(accuracy.read_text(encoding="utf-8")), context=context,
+                accuracy=parsed_accuracy, context=context,
                 loadgen_version=parse_detail(detail),
                 note="同模型、FP4、MLPerf v6.0 Offline 测量及准确率条件已验证；系统和软件差异仍需核对。仅为本地复现，不是 MLCommons 认证提交。")
 
@@ -178,15 +251,9 @@ def check(workspace):
     missing = [x for x in required if not (workspace / x).is_file()]
     if missing:
         raise RuntimeError("DeepSeek MLPerf assets missing: " + ", ".join(missing))
-    import deepseek_assets
-    print("Hash-verifying pinned DeepSeek FP4 weights (about 395 GiB)...", flush=True)
-    corrupt = deepseek_assets.verify(workspace)
-    if corrupt:
-        raise RuntimeError("Pinned model/tokenizer hash check failed: " + ", ".join(corrupt))
-    venv = Path("/work/.dsr1-acc-venv")
-    marker = venv / ".requirements_hash"
-    if not (venv / "bin/python3").is_file() or not marker.is_file() or marker.read_text().strip() != sha(workspace / "code/deepseek-r1/tensorrt/requirements.accuracy.txt"):
-        raise RuntimeError("Prepare the official /work/.dsr1-acc-venv in the image before going offline")
+    import prepare_deepseek_accuracy
+    prepare_deepseek_accuracy.verify_cache(workspace)
+    accuracy_environment(workspace)
     if not (workspace / "3rdparty/trtllm").is_dir():
         raise RuntimeError("Prepare the official 3rdparty/trtllm checkout")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
@@ -211,11 +278,7 @@ def check(workspace):
         p = (workspace / MODEL / name).resolve()
         if not p.is_relative_to((workspace / MODEL).resolve()) or not p.is_file() or p.stat().st_size == 0:
             raise RuntimeError("Incomplete/unsafe DeepSeek checkpoint shard: " + name)
-    import numpy as np
-    lengths = np.load(workspace / DATA / "input_lens.npy", mmap_mode="r", allow_pickle=False)
-    inputs = np.load(workspace / DATA / "input_ids_padded.npy", mmap_mode="r", allow_pickle=False)
-    if lengths.shape[0] != 4388 or inputs.shape[0] != 4388:
-        raise RuntimeError("Preprocessed dataset must contain 4388 samples")
+    validate_dataset(workspace, int(model["vocab_size"]))
     os.environ["SYSTEM_NAME"] = SYSTEM
     sys.path.insert(0, str(workspace))
     if "code" in sys.modules and not hasattr(sys.modules["code"], "__path__"):
@@ -230,11 +293,16 @@ def check(workspace):
     import torch
     if torch.cuda.device_count() != 8 or any(not re.search(r"\bB300\b", torch.cuda.get_device_name(i)) for i in range(8)):
         raise RuntimeError("Requires eight physical B300 GPUs")
+    import deepseek_assets
+    print("Hash-verifying pinned DeepSeek FP4 weights (about 395 GiB)...", flush=True)
+    corrupt = deepseek_assets.verify(workspace)
+    if corrupt:
+        raise RuntimeError("Pinned model/tokenizer hash check failed: " + ", ".join(corrupt))
     return dict(suite="MLPerf Inference v6.0", model="deepseek-r1", scenario="Offline", precision="fp4",
                 gpus=8, nodes=1, tensor_parallelism=8, expert_parallelism=8, speculative_decoding=False,
                 source_revision=revision, config_sha256=sha(workspace / CONFIG),
                 model_config_sha256=sha(workspace / MODEL / "config.json"),
-                dataset_sha256={p.name: sha(p) for p in (workspace / DATA / "input_ids_padded.npy", workspace / DATA / "input_lens.npy")},
+                dataset_sha256={p.name: sha(p) for p in (workspace / DATA / "input_ids_padded.npy", workspace / DATA / "input_lens.npy", workspace / RAW_DATA)},
                 cuda=torch.version.cuda, torch=torch.__version__,
                 tensorrt=getattr(importlib.import_module("tensorrt"), "__version__", "unknown"),
                 tensorrt_llm=getattr(importlib.import_module("tensorrt_llm"), "__version__", "unknown"),
@@ -244,12 +312,13 @@ def check(workspace):
 
 
 def command(target, phase, foreground=False):
-    args = BASE_ARGS + f" --test_mode={phase}"
+    args = BASE_ARGS + f" --test_mode={phase} --config_dir=configs --config_id=default --accuracy_target=0.99 --power_setting=MaxP"
     if foreground:
         args += " --server_in_foreground=True"
     # Assets and existing build links are checked above; avoid recreating links
     # to container-external scratch paths during the offline run.
-    return ["make", "--assume-old=link_dirs", target, "ENV=release", "NO_DISPLAY_RESULTS=1", "RUN_ARGS=" + args]
+    return ["make", "--assume-old=link_dirs", target, "ENV=release", "NO_DISPLAY_RESULTS=1",
+            "IGNORE_ACCURACY_FAILURE=0", "RUN_ARGS=" + args]
 
 
 def stop(proc):
@@ -263,13 +332,35 @@ def stop(proc):
         proc.wait()
 
 
+def run_harness_process(workspace, phase, env, stream, timeout):
+    args = command("run_harness", phase)
+    proc = subprocess.Popen(args, cwd=workspace, env=env, stdout=stream,
+                            stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        rc = proc.wait(timeout=timeout)
+        if rc:
+            raise subprocess.CalledProcessError(rc, args)
+    finally:
+        # make may spawn Python/MPI children; terminate the entire session on timeout.
+        stop(proc)
+
+
 def run_phase(workspace, out, phase, startup_timeout, test_timeout):
     folder = out / ("deepseek-performance" if phase == "PerformanceOnly" else "deepseek-accuracy")
     folder.mkdir()
     env = {**os.environ, "SYSTEM_NAME": SYSTEM, "LOG_DIR": str(folder),
+           "CONFIG_DIR": str(workspace / "configs"),
            "MODEL_DIR": str(workspace / "build/models"), "DATA_DIR": str(workspace / "build/data"),
            "PREPROCESSED_DATA_DIR": str(workspace / "build/preprocessed_data"),
-           "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+           "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
+           "HF_HOME": str(workspace / "build/hf-cache"),
+           "HF_HUB_CACHE": str(workspace / "build/hf-cache/hub"),
+           "HF_DATASETS_CACHE": str(workspace / "build/hf-cache/datasets")}
+    # A caller's make flags must not override the fixed RUN_ARGS/configuration.
+    for key in ("MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "TRANSFORMERS_CACHE"):
+        env.pop(key, None)
+    write_json(folder / "launch.json", dict(server=command("run_llm_server", phase, True),
+                                            harness=command("run_harness", phase), config_dir=env["CONFIG_DIR"]))
     endpoint = "http://127.0.0.1:30000/health"
     try:
         with urllib.request.urlopen(endpoint, timeout=2):
@@ -294,8 +385,7 @@ def run_phase(workspace, out, phase, startup_timeout, test_timeout):
                     raise TimeoutError("DeepSeek endpoint startup timed out")
                 time.sleep(5)
             with (folder / "harness.log").open("w", encoding="utf-8") as stream:
-                subprocess.run(command("run_harness", phase), cwd=workspace, env=env,
-                               stdout=stream, stderr=subprocess.STDOUT, timeout=test_timeout, check=True)
+                run_harness_process(workspace, phase, env, stream, test_timeout)
         finally:
             stop(proc)
 
@@ -325,7 +415,7 @@ def main():
             print(f"DeepSeek-R1 MLPerf v6.0 Offline: {phase}", flush=True)
             run_phase(workspace, out, phase, args.startup_timeout, args.test_timeout)
         files = [only_file(out / "deepseek-performance", name) for name in ("mlperf_log_summary.txt", "mlperf_log_detail.txt")]
-        files += [only_file(out / "deepseek-accuracy", name) for name in ("accuracy.txt", "mlperf_log_accuracy.json", "mlperf_log_summary.txt")]
+        files += [only_file(out / "deepseek-accuracy", name) for name in ("accuracy.txt", "mlperf_log_accuracy.json", "mlperf_log_summary.txt", "mlperf_log_detail.txt")]
         result.update(status="PASS", evidence_sha256={p.relative_to(out).as_posix(): sha(p) for p in files})
         write_json(out / "deepseek-mlperf.json", result)
         validated = load_evidence(out)

@@ -2,15 +2,17 @@
 
 面向 Linux 单节点 **8×NVIDIA B300** 的离线功能测试与公测性能对比工具。
 
-**当前是待实机验证的源码项目。** 已通过 56 项 CPU 测试和 Bash 语法检查，尚未构建、验证目标 Docker 镜像，也未运行 B300 GPU 测试。DeepSeek 扩展仍有待修复问题，见 [审查记录](docs/REVIEW.md)。
+**GPU 部分仍待实机验证。** 已修复离线准确率缓存、配置覆盖、数据/输出校验与遥测缺失误判等问题，并加入 Ubuntu 22.04 / 24.04 自动化验证。验证范围及结果见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)；CPU/模拟启动测试不代表真实 B300 测试通过。
 
 包含 GPU/ECC/拓扑采集、BF16 计算与显存压力测试、8 卡 NCCL 通信、Qwen 与 SDXL 功能测试，以及中文 HTML/JSON 报告。
 
 公测对比支持 Oracle 的单节点 8×B300 NCCL all-reduce 测试口径；独立的 DeepSeek-R1 扩展接入 NVIDIA 官方 MLPerf Inference v6.0 Offline 的性能和准确率流程，参考整机吞吐 **70,325.7 Tokens/s**。本地对比不代表 MLCommons 认证。
 
-- [完整使用说明](README_使用说明.md)
+- [总使用说明：Ubuntu 准备、运行、结果与排错](docs/使用总览.md)
+- [基础包详细使用说明](README_使用说明.md)
 - [DeepSeek-R1 / MLPerf 专项准备与运行](README_DeepSeek_MLPerf.md)
-- [已知问题、复现与优化建议](docs/REVIEW.md)
+- [Ubuntu 复查、修复与优化建议](docs/UBUNTU_REVIEW.md)
+- [首次审查历史记录](docs/REVIEW.md)
 - [公测来源与固定版本参数](public_baselines.json)
 
 联网 Linux 准备机先制作基础离线包：
@@ -27,7 +29,7 @@ bash run.sh quick /data/b300-results/quick-001
 bash run.sh compare /data/b300-results/nccl-001
 ```
 
-DeepSeek 需要另行准备完整 FP4 权重（约 395 GiB）、MLPerf 数据、固定版本官方源码依赖和独立镜像。修复已知问题并完成专项环境准备后：
+DeepSeek 需要另行准备完整 FP4 权重（约 395 GiB）、MLPerf 数据、固定版本官方源码依赖、离线准确率缓存和独立镜像。完成专项环境准备后：
 
 ```bash
 export MLPERF_REPO=/data/inference_results_v6.0
@@ -36,11 +38,14 @@ export MLPERF_IMAGE=b300-deepseek-mlperf:6.0
 bash run.sh deepseek /data/b300-results/deepseek-001
 ```
 
-CPU 测试不需要下载权重或安装 GPU runtime：
+CPU 测试不需要下载权重或安装 GPU runtime；新增数据格式测试使用 NumPy/Pandas，建议在独立 venv 中运行：
 
 ```bash
-python3 -m unittest discover -s tests
-bash -n run.sh run_deepseek_mlperf.sh prepare_offline.sh
+python3 -m venv .venv-test
+. .venv-test/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests
+for script in run.sh run_deepseek_mlperf.sh prepare_offline.sh; do bash -n "$script"; done
 ```
 
 仓库提供源码、固定版本下载清单和准备脚本。模型权重、Docker 镜像、运行结果和本机准备状态不提交到 Git。
