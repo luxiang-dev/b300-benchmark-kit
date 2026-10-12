@@ -227,7 +227,7 @@ class IdentityTests(unittest.TestCase):
         self.collect_fixture()
         self.update_gpu(correctness=[True, True, True])
         self.assertIn("cuda_correctness_missing_or_failed", self.codes(identity.evaluate_identity(self.out, 1)))
-        for count in (0, 9, True, 1.5):
+        for count in (0, 65, True, 1.5):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 identity.evaluate_identity(self.out, count)
 

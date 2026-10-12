@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local B300 identity/capacity/health workflow; no online downloads or genuine-card verdict."""
+"""Local NVIDIA/CPU server identity/capacity/health workflow; no online downloads or genuine-card verdict."""
 import argparse
 import csv
 from datetime import datetime
@@ -17,6 +17,7 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 import authenticity
+import hardware_profiles as hp
 import report
 from evidence import digest, export_evidence
 from telemetry_guard import validate_sample
@@ -47,6 +48,7 @@ class Workflow:
         self.watchdog_error = None
         self.image_id = None
         self.expected_uuids = None
+        self.hardware_profile = getattr(args, "hardware_profile", "b300")
         self.collection_status = {}
 
     def record(self, name, status, code=0):
@@ -69,6 +71,8 @@ class Workflow:
             return None
 
     def stop_container(self):
+        if self.args.profile == 'server':
+            return
         if shutil.which('docker'):
             try:
                 subprocess.run(['docker', 'stop', '--time', '10', self.container], capture_output=True, timeout=20)
@@ -181,11 +185,11 @@ class Workflow:
         if len(set(self.expected_uuids)) != self.args.gpus or any(not value.startswith('GPU-') for value in self.expected_uuids):
             raise RuntimeError('Physical GPU inventory has missing or duplicate UUIDs')
         for gpu in gpus:
-            if not re.search(r'\bB300\b', gpu.findtext('product_name', '')):
-                raise RuntimeError('GPU model differs from B300')
+            if not hp.matches(self.hardware_profile, gpu.findtext("product_name", "")):
+                raise RuntimeError("GPU model differs from the selected purchase profile")
             if gpu.findtext('mig_mode/current_mig') not in ('Disabled', 'N/A'):
                 raise RuntimeError('Disable MIG before testing full physical GPUs')
-            if gpu.findtext('ecc_mode/current_ecc') != 'Enabled':
+            if gpu.findtext("ecc_mode/current_ecc") not in (("Enabled",) if hp.identify(gpu.findtext("product_name", "")) == "b300" else ("Enabled", "N/A", "Not Supported")):
                 raise RuntimeError('ECC must be enabled and readable')
             if gpu.findtext('retired_pages/pending_retirement') in ('Yes', 'Pending') or gpu.findtext('remapped_rows/pending') in ('Yes', 'Pending') or gpu.findtext('remapped_rows/remapping_failure_occurred') == 'Yes':
                 raise RuntimeError('GPU has pending/failed memory repair; obtain OEM diagnosis before loading it')
@@ -193,7 +197,7 @@ class Workflow:
             if recovery not in (None, 'None', 'N/A', 'No Action'):
                 raise RuntimeError('GPU requires recovery action: ' + recovery)
         driver = tree.findtext('driver_version', '0')
-        if int(driver.split('.')[0]) < 580:
+        if self.hardware_profile == "b300" and int(driver.split('.')[0]) < 580:
             raise RuntimeError('Requires a compatible R580+ driver')
         self.capture(['nvidia-smi', 'topo', '-m'], 'topology.txt')
         self.capture(['nvidia-smi', 'nvlink', '-s'], 'nvlink.txt')
@@ -230,66 +234,92 @@ class Workflow:
     def run(self):
         self.out.mkdir(parents=True, exist_ok=True)
         self.check_output()
-        required = ['identity']
-        if self.args.profile == 'authenticity':
-            required += ['server', 'server-health-before', 'environment', 'memory', 'stress', 'nccl', 'nccl-public', 'dcgm', 'server-health-after']
+        required = ["identity"]
+        if self.args.profile == "server":
+            required = ["server", "server-health-before", "server-health-after"]
+        if self.args.profile == "authenticity":
+            required += ["server", "server-health-before", "environment", "memory", "stress", "server-health-after"]
+            if self.args.gpus > 1:
+                required.append("nccl")
+            if self.hardware_profile == "b300":
+                required.append("dcgm")
+                if self.args.gpus == 8:
+                    required.append("nccl-public")
         write_json(self.out / 'plan.json', dict(profile=self.args.profile, gpus=self.args.gpus, required=required,
                    max_gpu_temp=self.args.max_temp, result_contract=2, run_id=self.run_id, seconds=self.args.seconds,
-                   matrix=8192, memory_fraction=self.args.memory_fraction, stress_memory_fraction=0.65, nccl_iterations=50,
-                   start_epoch=self.started))
+                   matrix=8192 if self.hardware_profile == "b300" else 4096, memory_fraction=self.args.memory_fraction, stress_memory_fraction=0.65, nccl_iterations=50,
+                   start_epoch=self.started, hardware_profile=self.hardware_profile,
+                   coverage_notes=["采购型号和容量未由自动识别核实；未支持或未执行的项目不属于 PASS 范围。", "CPU/RAM/结果盘为有限抽查；无 GPU 项目不运行 CUDA、NCCL 或 GPU 诊断。"]))
         shutil.copyfile(ROOT / 'public_baselines.json', self.out / 'public-baselines.json')
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: self.cancelled.set())
         rc = 0
         host_only = False
         try:
-            self.record('host-identity', 'RUNNING')
-            authenticity.collect_host(self.out)
-            self.record('host-identity', 'PASS')
-            if self.args.profile == 'identity':
-                self.capture(['nvidia-smi', '-q', '-x'], 'before.xml')
-                try:
-                    self.preflight()
-                except Exception as error:
-                    self.record('identity-cuda', 'SKIP')
-                    (self.out / 'identity-cuda-unavailable.txt').write_text(str(error), encoding='utf-8')
-                    identity = authenticity.evaluate_identity(self.out, self.args.gpus)
-                    self.record('identity', 'FAIL' if identity['status'] == 'FAIL' else 'PASS', 1 if identity['status'] == 'FAIL' else 0)
-                    rc = 1 if identity['status'] == 'FAIL' else 2
-                    host_only = True
+            if self.args.profile == "server":
+                self.execute("server-health-before", [sys.executable, str(ROOT / "server_health.py"), "collect", "--out", str(self.out), "--phase", "before"], 600)
+                self.execute("server", [sys.executable, str(ROOT / "server_probe.py"), "full", "--out", str(self.out)], 900)
+                self.execute("server-health-after", [sys.executable, str(ROOT / "server_health.py"), "collect", "--out", str(self.out), "--phase", "after"], 600)
             else:
-                self.preflight()
-            if not host_only:
-                self.monitor = threading.Thread(target=self.telemetry, daemon=True)
-                self.monitor.start()
-                self.execute('identity-cuda', self.torchrun('authenticity.py', 'cuda'))
-                identity = authenticity.evaluate_identity(self.out, self.args.gpus)
-                if identity['status'] == 'FAIL':
-                    self.record('identity', 'FAIL', 1)
-                    raise RuntimeError('Identity evidence contains contradictions; inspect identity-summary.json')
-                self.record('identity', 'PASS')
-            if self.args.profile == 'authenticity':
-                self.execute('server', [sys.executable, str(ROOT / 'server_probe.py'), 'full', '--out', str(self.out)], 900)
-                self.execute('server-health-before', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'before'], 600)
-                self.execute('environment', self.torchrun('gpu_test.py', 'environment'))
-                self.execute('memory', self.torchrun('memory_probe.py', '--memory-fraction', str(self.args.memory_fraction), '--max-temp', str(self.args.max_temp)))
-                self.execute('stress', self.torchrun('gpu_test.py', 'stress', '--seconds', str(self.args.seconds), '--max-temp', str(self.args.max_temp), '--memory-fraction', '0.65'), self.args.seconds + 1800)
-                self.execute('nccl', self.torchrun('gpu_test.py', 'nccl', '--iterations', '50'))
-                if self.args.gpus == 8:
-                    self.execute('nccl-public', self.docker(['python', '/kit/public_benchmark.py', 'run', '--out', '/out', '--timeout', '1800']), 1900)
+                self.record('host-identity', 'RUNNING')
+                collected = authenticity.collect_host(self.out)
+                if self.args.profile == 'authenticity' and all(hp.matches('b300', g['name']) for g in collected['observations']['gpus']) and collected['observations']['gpus']:
+                    plan = json.loads((self.out / 'plan.json').read_text(encoding='utf-8'))
+                    if 'dcgm' not in plan['required']:
+                        plan['required'].append('dcgm')
+                    if self.args.gpus == 8 and 'nccl-public' not in plan['required']:
+                        plan['required'].append('nccl-public')
+                    write_json(self.out / 'plan.json', plan)
+                self.record('host-identity', 'PASS')
+                if self.args.profile == 'identity':
+                    self.capture(['nvidia-smi', '-q', '-x'], 'before.xml')
+                    try:
+                        self.preflight()
+                    except Exception as error:
+                        self.record('identity-cuda', 'SKIP')
+                        (self.out / 'identity-cuda-unavailable.txt').write_text(str(error), encoding='utf-8')
+                        identity = authenticity.evaluate_identity(self.out, self.args.gpus, self.hardware_profile)
+                        self.record('identity', 'FAIL' if identity['status'] == 'FAIL' else 'PASS', 1 if identity['status'] == 'FAIL' else 0)
+                        rc = 1 if identity['status'] == 'FAIL' else 2
+                        host_only = True
                 else:
-                    self.record('nccl-public', 'SKIP')
-                if shutil.which('dcgmi'):
-                    version = self.capture(['dcgmi', '--version'], 'dcgm-version.txt')
-                    match = re.search(r'(\d+)\.(\d+)\.(\d+)', version.stdout if version else '')
-                    if match and tuple(map(int, match.groups())) >= (4, 4, 0):
-                        self.execute('dcgm', ['dcgmi', 'diag', '-r', '3', '-i', ','.join(map(str, range(self.args.gpus))), '-j'], 10800)
-                        shutil.copyfile(self.out / 'dcgm.log', self.out / 'dcgm.json')
+                    self.preflight()
+                if not host_only:
+                    self.monitor = threading.Thread(target=self.telemetry, daemon=True)
+                    self.monitor.start()
+                    self.execute('identity-cuda', self.torchrun('authenticity.py', 'cuda'))
+                    identity = authenticity.evaluate_identity(self.out, self.args.gpus, self.hardware_profile)
+                    if identity['status'] == 'FAIL':
+                        self.record('identity', 'FAIL', 1)
+                        raise RuntimeError('Identity evidence contains contradictions; inspect identity-summary.json')
+                    self.record('identity', 'PASS')
+                if self.args.profile == 'authenticity':
+                    self.execute('server', [sys.executable, str(ROOT / 'server_probe.py'), 'full', '--out', str(self.out)], 900)
+                    self.execute('server-health-before', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'before'], 600)
+                    self.execute('environment', self.torchrun('gpu_test.py', 'environment'))
+                    self.execute('memory', self.torchrun('memory_probe.py', '--memory-fraction', str(self.args.memory_fraction), '--max-temp', str(self.args.max_temp)))
+                    self.execute('stress', self.torchrun('gpu_test.py', 'stress', '--matrix', "4096" if self.hardware_profile != "b300" else "8192", '--seconds', str(self.args.seconds), '--max-temp', str(self.args.max_temp), '--memory-fraction', '0.65'), self.args.seconds + 1800)
+                    if self.args.gpus > 1:
+                        self.execute("nccl", self.torchrun("gpu_test.py", "nccl", "--iterations", "50"))
+                    else:
+                        self.record("nccl", "SKIP")
+                    host_gpus = authenticity.parse_smi_xml((self.out / "before.xml").read_bytes())["gpus"]
+                    if hp.public_compatible(host_gpus):
+                        self.execute('nccl-public', self.docker(['python', '/kit/public_benchmark.py', 'run', '--out', '/out', '--timeout', '1800']), 1900)
+                    else:
+                        self.record('nccl-public', 'SKIP')
+                    dcgm_supported = all(hp.identify(g['name']) in ('b300', 'b200', 'h200', 'h100', 'a100', 'a30', 'a40', 'a10', 'l40s', 'l40', 'l4', 't4') for g in host_gpus)
+                    if shutil.which('dcgmi') and dcgm_supported:
+                        version = self.capture(['dcgmi', '--version'], 'dcgm-version.txt')
+                        match = re.search(r'(\d+)\.(\d+)\.(\d+)', version.stdout if version else '')
+                        if match and tuple(map(int, match.groups())) >= (4, 4, 0):
+                            self.execute('dcgm', ['dcgmi', 'diag', '-r', '3', '-i', ','.join(map(str, range(self.args.gpus))), '-j'], 10800)
+                            shutil.copyfile(self.out / 'dcgm.log', self.out / 'dcgm.json')
+                        else:
+                            self.record('dcgm', 'SKIP')
                     else:
                         self.record('dcgm', 'SKIP')
-                else:
-                    self.record('dcgm', 'SKIP')
-                self.execute('server-health-after', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'after'], 600)
+                    self.execute('server-health-after', [sys.executable, str(ROOT / 'server_health.py'), 'collect', '--out', str(self.out), '--phase', 'after'], 600)
         except Exception as error:
             rc = 130 if self.cancelled.is_set() and not self.watchdog_error else 1
             self.record('launcher', 'FAIL', rc)
@@ -304,11 +334,13 @@ class Workflow:
                 self.monitor.join(timeout=12)
             if self.telemetry_start is not None:
                 write_json(self.out / 'telemetry-window.json', dict(start_epoch=self.telemetry_start, end_epoch=time.time()))
-            self.capture(['nvidia-smi', '-q', '-x'], 'after.xml')
-            self.capture(['nvidia-smi', 'nvlink', '-e'], 'nvlink-errors-after.txt')
+            if self.args.profile != 'server':
+                self.capture(['nvidia-smi', '-q', '-x'], 'after.xml')
+                self.capture(['nvidia-smi', 'nvlink', '-e'], 'nvlink-errors-after.txt')
             self.capture(['journalctl', '-k', '--since', '@' + str(int(self.started)), '--no-pager'], 'kernel-during.log')
             try:
-                authenticity.evaluate_identity(self.out, self.args.gpus)
+                if self.args.profile != "server":
+                    authenticity.evaluate_identity(self.out, self.args.gpus, self.hardware_profile)
                 summary = report.generate(self.out)
                 if summary['overall'] == 'FAIL' and rc != 130:
                     rc = 1
@@ -325,17 +357,23 @@ class Workflow:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--profile', choices=['identity', 'authenticity'], default='authenticity')
+    parser.add_argument('--profile', choices=["identity", "authenticity", "server"], default='authenticity')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--image', default='b300-test:1.0')
-    parser.add_argument('--gpus', type=int, default=8)
+    parser.add_argument("--gpus", type=int, default=0, help="0=auto-detect; server profile uses 0 GPUs")
+    parser.add_argument("--hardware-profile", choices=list(hp.PROFILES), default="auto")
     parser.add_argument('--seconds', type=int, default=600)
     parser.add_argument('--memory-fraction', type=float, default=0.85)
     parser.add_argument('--max-temp', type=int, default=85)
     args = parser.parse_args()
     if sys.platform != 'linux':
         parser.error('The GPU workflow requires Linux; dashboard --preview can be used on Windows')
-    if not 1 <= args.gpus <= 8 or not 1 <= args.seconds <= 86400 or not 0.5 <= args.memory_fraction <= 0.9 or not 1 <= args.max_temp < 120:
+    if args.profile == "server":
+        args.gpus = 0
+    elif args.gpus == 0:
+        raw = subprocess.run(["nvidia-smi", "-q", "-x"], capture_output=True, text=True, timeout=10, check=True).stdout
+        args.gpus = len(ET.fromstring(raw).findall("gpu"))
+    if (args.profile != "server" and not 1 <= args.gpus <= hp.MAX_GPUS) or not 1 <= args.seconds <= 86400 or not 0.5 <= args.memory_fraction <= 0.9 or not 1 <= args.max_temp < 120:
         parser.error('Invalid GPU count, duration, memory fraction or temperature limit')
     import job_lock
     descriptor = job_lock.acquire()

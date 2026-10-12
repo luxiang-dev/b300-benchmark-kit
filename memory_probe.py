@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Active B300 HBM write/read coverage test; launch with torchrun on an idle node.
+"""Active NVIDIA GPU memory write/read test; launch with torchrun on an idle node.
 
 All allocated chunks remain resident and are written before any are verified.
-This checks the measured allocation, not all installed HBM or product provenance.
+This checks the measured allocation, not all installed memory or provenance.
 PyTorch is imported only by the existing GPU setup at execution time.
 """
 import argparse

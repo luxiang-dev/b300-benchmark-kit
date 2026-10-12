@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""8-GPU functional tests. Run with torchrun; no online dependencies at runtime."""
+"""NVIDIA GPU functional tests. Run with torchrun; no online dependencies at runtime."""
 import argparse
 from datetime import timedelta
 import json
@@ -55,8 +55,8 @@ def setup(args):
         raise RuntimeError(f"Expected {args.gpus} visible GPUs/processes, got {torch.cuda.device_count()}/{world}")
     torch.cuda.set_device(rank)
     props = torch.cuda.get_device_properties(rank)
-    if not re.search(r"\bB300\b", props.name):
-        raise RuntimeError(f"Expected B300, found {props.name}")
+    if torch.version.hip is not None:
+        raise RuntimeError("This workflow requires NVIDIA CUDA, not ROCm")
     dist.init_process_group("nccl", timeout=timedelta(minutes=10), device_id=torch.device(f"cuda:{rank}"))
     return torch, dist, rank, world
 
@@ -72,7 +72,8 @@ def temperature(rank):
 
 def environment(torch, dist, rank, world, args):
     props = torch.cuda.get_device_properties(rank)
-    a = torch.ones((128, 128), device="cuda", dtype=torch.bfloat16)
+    dtype = torch.bfloat16 if torch.cuda.get_device_capability(rank)[0] >= 8 else torch.float32
+    a = torch.ones((128, 128), device="cuda", dtype=dtype)
     c = a @ a
     torch.cuda.synchronize()
     if not bool((c == 128).all()):
@@ -80,12 +81,15 @@ def environment(torch, dist, rank, world, args):
     dist.barrier()
     return dict(status="PASS", gpu=props.name, memory_gib=props.total_memory / 2**30,
                 capability=list(torch.cuda.get_device_capability(rank)), torch=torch.__version__,
-                cuda=torch.version.cuda, nccl=list(torch.cuda.nccl.version()), world_size=world, bf16_correctness=True)
+                cuda=torch.version.cuda, nccl=list(torch.cuda.nccl.version()), world_size=world, bf16_correctness=True if dtype == torch.bfloat16 else None,
+                fp32_correctness=True if dtype == torch.float32 else None, compute_dtype="BF16" if dtype == torch.bfloat16 else "FP32")
 
 
 def stress(torch, dist, rank, world, args):
     n = args.matrix
-    a = torch.full((n, n), 1 / 16, device="cuda", dtype=torch.bfloat16)
+    dtype = torch.bfloat16 if torch.cuda.get_device_capability(rank)[0] >= 8 else torch.float32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    a = torch.full((n, n), 1 / 16, device="cuda", dtype=dtype)
     b = a.clone()
     c = torch.empty_like(a)
     free, total = torch.cuda.mem_get_info()
@@ -142,7 +146,7 @@ def stress(torch, dist, rank, world, args):
     peak_temp = max(peak_temp, temperature(rank))
     if peak_temp >= args.max_temp:
         raise RuntimeError(f"Temperature reached stop threshold {args.max_temp} C")
-    return dict(status="PASS", duration_s=time.perf_counter() - start, requested_seconds=args.seconds, matrix=n, dtype="BF16",
+    return dict(status="PASS", duration_s=time.perf_counter() - start, requested_seconds=args.seconds, matrix=n, dtype="BF16" if dtype == torch.bfloat16 else "FP32",
                 memory_tested_gib=chunk_count * 0.25, gemm_iterations=iterations,
                 gemm_tflops=2 * n ** 3 * iterations / gemm_seconds / 1e12,
                 peak_temperature_c=peak_temp, memory_patterns=[17, -31],

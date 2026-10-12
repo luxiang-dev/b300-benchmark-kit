@@ -120,8 +120,8 @@ class WorkflowReportTests(unittest.TestCase):
         self.assertIn("硬件身份交叉核验", page)
         self.assertIn("inverted-address", page)
         self.assertIn("不能替代", page)
-        self.assertIn("<title>B300 2卡测试报告</title>", page)
-        self.assertIn("<h1>NVIDIA B300 · 2卡测试报告</h1>", page)
+        self.assertIn("<title>服务器 · 2 GPU 测试报告</title>", page)
+        self.assertIn("<h1>服务器验货 · 2 GPU 测试报告</h1>", page)
         self.assertNotIn("<h1>NVIDIA B300 · 8卡", page)
 
     def test_incomplete_or_inflated_memory_claims_cannot_pass(self):

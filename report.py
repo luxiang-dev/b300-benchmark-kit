@@ -40,12 +40,21 @@ def ecc_snapshot(path):
 
 def hardware_issues(out, expected_gpus=8, strict=False):
     failures, review = [], []
+    generic_health = load_json(out / "plan.json").get("hardware_profile", "b300") != "b300" if (out / "plan.json").is_file() else False
+    if generic_health and expected_gpus:
+        import hardware_profiles as hp
+        try:
+            observed = ET.parse(out / 'before.xml').getroot().findall('gpu')
+            if observed and all(hp.matches('b300', gpu.findtext('product_name', '')) for gpu in observed):
+                generic_health = False
+        except (OSError, ET.ParseError):
+            pass
     try:
-        before, after = ecc_snapshot(out / "before.xml"), ecc_snapshot(out / "after.xml")
+        before, after = (ecc_snapshot(out / "before.xml"), ecc_snapshot(out / "after.xml")) if expected_gpus else ({}, {})
         if set(before) != set(after) or len(after) != expected_gpus:
             failures.append(f"测试前后 GPU 列表发生变化，或 GPU 数量不是 {expected_gpus}。")
         for uuid, counters in after.items():
-            if not counters:
+            if not counters and (not generic_health or any(g.findtext("uuid") == uuid and g.findtext("ecc_mode/current_ecc") == "Enabled" for g in ET.parse(out / "after.xml").getroot().findall("gpu"))):
                 review.append(f"{uuid}: 无法读取不可纠正 ECC 计数。")
             for key, value in counters.items():
                 baseline = before.get(uuid, {}).get(key)
@@ -57,7 +66,7 @@ def hardware_issues(out, expected_gpus=8, strict=False):
                     review.append(f"{uuid}: {key} 计数下降，可能发生重置。")
                 elif value > 0:
                     review.append(f"{uuid}: {key} 存在历史不可纠正错误 {value}。")
-        for gpu in ET.parse(out / "after.xml").getroot().findall("gpu"):
+        for gpu in (ET.parse(out / "after.xml").getroot().findall("gpu") if expected_gpus else []):
             pending = gpu.findtext("retired_pages/pending_retirement")
             if pending in ("Yes", "Pending"):
                 failures.append(f"{gpu.findtext('uuid')}: 有显存页等待退役。")
@@ -100,11 +109,13 @@ def hardware_issues(out, expected_gpus=8, strict=False):
     if (out / "telemetry.stderr").exists() and (out / "telemetry.stderr").stat().st_size:
         review.append("GPU 遥测出现读取错误，检查 telemetry.stderr。")
     import hardware_health
-    extra_failures, extra_review = hardware_health.evaluate(out, strict)
+    extra_failures, extra_review = hardware_health.evaluate(out, strict, generic=generic_health) if expected_gpus else ([], [])
     return list(dict.fromkeys(failures + extra_failures)), list(dict.fromkeys(review + extra_review))
 
 
 def telemetry_evidence(out, plan):
+    if plan.get("gpus") == 0:
+        return dict(samples=0, status="NOT_APPLICABLE", per_gpu={}), [], []
     failures, review, rows = [], [], []
     by_gpu, invalid = {}, 0
     try:
@@ -212,7 +223,7 @@ def generate(out):
     if 'identity' in plan['required']:
         try:
             import authenticity
-            identity = authenticity.evaluate_identity(out, plan['gpus'])
+            identity = authenticity.evaluate_identity(out, plan['gpus'], plan.get("hardware_profile"))
             if identity['status'] == 'FAIL':
                 failures.append('身份交叉核验出现矛盾，检查 identity-summary.json。')
             elif identity['status'] != 'CONSISTENT':
@@ -297,7 +308,13 @@ def generate(out):
     overall = "FAIL" if failures else "INCOMPLETE" if incomplete else "REVIEW" if review else "PASS"
     summary = dict(overall=overall, profile=plan["profile"], expected_gpus=plan["gpus"], stages=stages,
                    failures=failures, incomplete=incomplete, review=review, results=results, public_comparison=public,
-                   telemetry=telemetry, identity_verification=identity, server_verification=server, server_health=server_health)
+                   hardware_profile=plan.get("hardware_profile", "b300"), coverage_notes=plan.get("coverage_notes", []), telemetry=telemetry, identity_verification=identity, server_verification=server, server_health=server_health)
+    summary['coverage'] = dict(gpu='NOT_TESTED' if not plan['gpus'] else 'SEE_PER_GPU_RESULTS',
+                              nccl='NOT_APPLICABLE' if plan['gpus'] < 2 else by_name.get('nccl', {}).get('status', 'NOT_TESTED'),
+                              public_reference=by_name.get('nccl-public', {}).get('status', 'NOT_TESTED'),
+                              dcgm=by_name.get('dcgm', {}).get('status', 'NOT_TESTED'),
+                              ecc='SEE_PER_GPU_SUPPORT_AND_RAW_COUNTERS',
+                              purchase_configuration='NOT_VERIFIED')
     import purchase_acceptance
     summary['acceptance'] = purchase_acceptance.evaluate(summary)
     import inventory_summary
@@ -317,18 +334,19 @@ def generate(out):
     explanation = ("DeepSeek-R1 使用完整 FP4 模型、TP8/EP8，显示 MLPerf v6.0 Offline 整机输出 Tokens/s。"
                    "性能与准确率各启动新的 endpoint；准确率响应、长度和原始日志须通过验证。公测差距仅为性能参考，本地复现未完成审计或认证。"
                    if plan["profile"] == "deepseek" else
-                   "LLM 是 8 个独立副本，吞吐包含预填充与解码，未测首 Token 延迟，也未使用张量并行。SDXL 按每卡记录生成时间。"
-                   "GEMM 是 BF16 合成负载；PyTorch NCCL 使用 MAX 性能测量与 SUM 正确性检查。nccl-public 单独使用官方 FP32 SUM all_reduce_perf 口径。"
+                   "LLM 按实际卡数运行独立副本，吞吐包含预填充与解码，未测首 Token 延迟，也未使用张量并行。SDXL 按每卡记录生成时间。"
+                   "GEMM 按架构使用 BF16 或 FP32 合成负载；PyTorch NCCL 使用 MAX 性能测量与 SUM 正确性检查。nccl-public 单独使用官方 FP32 SUM all_reduce_perf 口径。"
                    "带宽不能直接证明流量走了 NVLink；应对照同型号、同软件、同功耗配置的基线。")
     if plan['profile'] in ('identity', 'authenticity'):
         explanation = ('身份核验交叉检查 PCI、CUDA 架构、UUID、容量和真实计算。HBM 地址模式验证同时分配的实际容量，'
                        '累计读验字节不是显存容量；85%目标覆盖不是全显存覆盖。GEMM/NCCL/DCGM 为功能与稳定性证据，'
                        '不能替代板标签、采购记录和厂商认证。公测性能差距本身不等于假卡。')
     page = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>B300 {plan['gpus']}卡测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
-<h1>NVIDIA B300 · {plan['gpus']}卡测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
+<title>服务器 · {plan['gpus']} GPU 测试报告</title><style>body{{max-width:1100px;margin:32px auto;padding:0 20px;font:16px system-ui;color:#172538;background:#f3f6fa}}section,details{{background:white;padding:18px;margin:16px 0;border-radius:10px}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;text-align:left;border-bottom:1px solid #ddd}}pre{{white-space:pre-wrap;word-break:break-word;font-size:13px}}img{{width:200px;margin:6px;border-radius:8px}}.status{{font-size:30px;font-weight:bold}}</style>
+<h1>服务器验货 · {plan['gpus']} GPU 测试报告</h1><section><div class="status">{overall}</div><p>模式：{esc(plan['profile'])}；预期 GPU：{plan['gpus']} 张。</p>
 <p>PASS 仅表示本次已运行项目通过。短时测试不能证明长期稳定性，也不能替代厂商验收或离线现场诊断。</p><ul>{notes}</ul></section>
 <section><h2>采购验收状态：{esc(summary['acceptance']['status'])}</h2><p>{esc(summary['acceptance']['statement'])}</p><ul>{''.join('<li>待完成：' + esc(item['title']) + '</li>' for item in summary['acceptance']['pending_checks'])}</ul></section>
+<section><h2>本次覆盖范围</h2><p>型号策略：{esc(summary["hardware_profile"])}；自动识别不是采购配置核对。</p><ul>{"".join("<li>" + esc(x) + "</li>" for x in summary["coverage_notes"])}</ul></section>
 <section><h2>测试阶段</h2><table><tr><th>项目</th><th>结果</th><th>退出码</th></tr>{table}</table></section>
 {identity_section}
 {server_section}

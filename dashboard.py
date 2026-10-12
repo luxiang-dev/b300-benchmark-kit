@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline localhost dashboard for B300 evidence workflows; use SSH forwarding remotely."""
+"""Offline localhost dashboard for NVIDIA GPU and CPU server evidence workflows; use SSH forwarding remotely."""
 import argparse
 import csv
 from datetime import datetime, timezone
@@ -24,16 +24,18 @@ import xml.etree.ElementTree as ET
 from evidence import export_evidence
 from telemetry_guard import validate_sample
 import job_lock
+import hardware_profiles as hp
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = [
+    dict(id="server", title="整机检查（无需 GPU）", description="采集 CPU、DIMM、存储、NIC、BMC；抽查 CPU/RAM/结果盘并复核 SMART 与内核 RAS。", requires_gpus=0),
     dict(id='import-image', title='导入离线镜像', description='验证封装哈希后导入本地镜像，不联网拉取。', requires_docker=True),
     dict(id='identity', title='身份交叉核验', description='先采集PCI/序列号；条件满足再核对CUDA身份与实际计算。', requires_gpus=0),
-    dict(id='authenticity', title='整机硬件验真与稳定性', description='身份、服务器抽查、约85%HBM、10分钟计算、8卡通信、公测、DCGM。', requires_gpus=8, requires_docker=True, requires_image=True),
-    dict(id='quick', title='模型功能快检', description='计算、NCCL、Qwen 0.6B 和 SDXL。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
-    dict(id='compare', title='8卡 NCCL 公测对比', description='环境检查及与 Oracle 固定口径一致的 all-reduce。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
-    dict(id='full', title='完整功能测试', description='10分钟压力、通信、两个Qwen、SDXL、DCGM；采购验收另行完成。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
-    dict(id='burn', title='长时间稳定性', description='默认1小时压力，再执行完整模型及诊断。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
+    dict(id='authenticity', title='整机硬件验真与稳定性', description='身份、服务器抽查、约85%HBM、可配置计算压力；多卡通信；按型号提供公测及诊断。', requires_gpus=1, minimum_gpus=True, requires_docker=True, requires_image=True),
+    dict(id='quick', title='模型功能快检', description='计算、NCCL、Qwen 0.6B 和 SDXL。', requires_gpus=1, minimum_gpus=True, requires_docker=True, requires_image=True, requires_bundle=True),
+    dict(id='compare', title='8×B300 NCCL 公测对比', description='环境检查及与 Oracle 固定口径一致的 all-reduce。', requires_gpus=8, requires_docker=True, requires_image=True, requires_bundle=True),
+    dict(id='full', title='完整功能测试', description='10分钟压力、通信、两个Qwen、SDXL、DCGM；采购验收另行完成。', requires_gpus=1, minimum_gpus=True, requires_docker=True, requires_image=True, requires_bundle=True),
+    dict(id='burn', title='长时间稳定性', description='默认1小时压力，再执行完整模型及诊断。', requires_gpus=1, minimum_gpus=True, requires_docker=True, requires_image=True, requires_bundle=True),
     dict(id='deepseek', title='DeepSeek-R1 / MLPerf', description='独立官方环境的完整 Offline 性能与准确率；需要数小时。', requires_gpus=8, requires_docker=True, requires_deepseek=True),
 ]
 PROFILE_MAP = {p['id']: p for p in PROFILES}
@@ -126,12 +128,21 @@ def profile_eligibility(profile, ready, preview=False):
         reasons.append('需要可读取的 nvidia-smi，才能采集硬件身份。')
     expected = profile.get('requires_gpus')
     if expected:
-        if len(ready['gpus']) != expected or any(not re.search(r'\bB300\b', gpu.get('name') or '') for gpu in ready['gpus']):
-            reasons.append(f'需要 {expected} 张完整 B300。')
-        if any(gpu.get('mig') not in ('Disabled', 'N/A') or gpu.get('ecc') != 'Enabled' for gpu in ready['gpus']):
-            reasons.append('MIG 必须关闭，ECC 必须开启并可读取。')
+        count = len(ready["gpus"])
+        if not 1 <= count <= hp.MAX_GPUS or (not profile.get("minimum_gpus") and count != expected):
+            reasons.append(f"需要 {expected} 张物理 NVIDIA GPU（通用项目支持 1–64 张）。")
+        if profile["id"] in ("compare", "deepseek") and not hp.public_compatible(ready["gpus"]):
+            reasons.append("当前参考/专项固定为 8×B300，其他型号或卡数不能套用。")
+        if any(gpu.get("mig") not in ("Disabled", "N/A", "Not Supported") or gpu.get("ecc") not in (("Enabled",) if hp.identify(gpu.get("name", "")) == "b300" else ("Enabled", "N/A", "Not Supported")) for gpu in ready["gpus"]):
+            reasons.append('MIG 必须关闭；支持 ECC 的设备必须开启，N/A 不计为 ECC 已测。')
         if ready.get('busy_pids') or not ready.get('busy_check_available'):
             reasons.append('GPU 不空闲，或无法核对计算进程。')
+    if profile["id"] in ("quick", "full", "burn"):
+        minimum_memory = 12 * 1024 if profile["id"] == "quick" else 32 * 1024
+        if any(type(gpu.get("memory_mib")) not in (int, float) or gpu["memory_mib"] < minimum_memory for gpu in ready["gpus"]) and not ready.get("synthetic_only"):
+            reasons.append(f"预置模型项目要求每卡至少 {minimum_memory // 1024} GiB 可见显存；较小容量请选择硬件负载。")
+        if any((hp.capability_for(gpu.get("name", "")) or [0])[0] < 8 for gpu in ready["gpus"]):
+            reasons.append("预置 Qwen BF16 模型需要可确认的 Ampere 或更新架构；其他设备可运行硬件负载。")
     if profile.get('requires_docker') and not ready['tools']['docker']:
         reasons.append('主机缺少 Docker。')
     if profile.get('requires_image') and not ready['image']['available']:
@@ -172,10 +183,11 @@ class JobManager:
         return self._ready
 
     def command(self, profile, out, seconds):
-        if profile in ('identity', 'authenticity'):
+        job = self.jobs.get(self.active, {})
+        if profile in ("identity", "authenticity", "server"):
             return [sys.executable, str(ROOT / 'run_authenticity.py'), '--profile', profile, '--out', str(out),
-                    '--image', self.image, '--gpus', '8', '--seconds', str(seconds if profile == 'authenticity' else 600),
-                    '--max-temp', str(self.max_temp)]
+                    '--image', self.image, "--gpus", str(job.get("gpus", len(self.ready().get("gpus", [])) or 1)), "--hardware-profile", job.get("hardware_profile", "auto"), "--memory-fraction", str(job.get("memory_fraction", .85)), '--seconds', str(seconds if profile == 'authenticity' else 600),
+                    '--max-temp', str(job.get("max_temp", self.max_temp))]
         if profile == 'import-image':
             # Verify before importing any Docker archive. No shell interpolation.
             verifier = [sys.executable, str(ROOT / 'bundle.py'), 'verify']
@@ -191,10 +203,25 @@ class JobManager:
         seconds = body.get('seconds', 3600 if profile == 'burn' else 600)
         if type(seconds) is not int or not 1 <= seconds <= 86400:
             raise ValueError('seconds must be an integer from 1 to 86400')
+        hardware_profile = body.get("hardware_profile", "auto")
+        if not isinstance(hardware_profile, str) or hardware_profile not in hp.PROFILES:
+            raise ValueError("Unknown hardware profile")
+        expected_gpus = body.get("expected_gpus", 0)
+        memory_fraction = body.get("memory_fraction", .85)
+        max_temp = body.get("max_temp", self.max_temp)
+        if type(expected_gpus) is not int or not 0 <= expected_gpus <= hp.MAX_GPUS:
+            raise ValueError("expected_gpus must be 0 (observed count) or 1–64")
+        if type(memory_fraction) not in (int, float) or not math.isfinite(memory_fraction) or not .5 <= memory_fraction <= .9:
+            raise ValueError("memory_fraction must be 0.5–0.9")
+        if type(max_temp) is not int or not 40 <= max_temp <= 95:
+            raise ValueError("max_temp must be 40–95 C")
         with self.lock:
             if self.active:
                 raise RuntimeError('A job is already active')
             ready = self.ready(True)
+            count = len(ready.get("gpus", []))
+            if profile not in ("server", "identity", "import-image") and ((expected_gpus and count != expected_gpus) or any(not hp.matches(hardware_profile, gpu.get("name", "")) for gpu in ready.get("gpus", []))):
+                raise ValueError("当前 GPU 型号或数量与指定采购目标不符；先执行身份核验")
             eligibility = profile_eligibility(PROFILE_MAP[profile], ready, self.preview)
             if not eligibility['available']:
                 raise ValueError(eligibility['unavailable_reason'])
@@ -206,7 +233,8 @@ class JobManager:
                 out.mkdir()
                 job = dict(id=job_id, profile=profile, status='RUNNING', exit_code=None, started_at=utc_now(),
                            ended_at=None, seconds=seconds, cancelled=False, thermal_stop=False,
-                           expected_gpu_uuids=[gpu['uuid'] for gpu in ready.get('gpus', [])])
+                           gpus=0 if profile == "server" else expected_gpus or count or 1, expected_gpus=expected_gpus, hardware_profile=hardware_profile, memory_fraction=memory_fraction, max_temp=max_temp,
+                           expected_gpu_uuids=[] if profile == "server" else [gpu['uuid'] for gpu in ready.get('gpus', [])])
                 self.jobs[job_id] = job
                 write_json(out / 'job.json', job)
                 self.active = job_id
@@ -222,6 +250,8 @@ class JobManager:
             return job_id
 
     def _cleanup_containers(self, job_id):
+        if self.jobs.get(job_id, {}).get('profile') == 'server':
+            return
         if not shutil.which('docker'):
             return
         listed = run_capture(['docker', 'ps', '-q', '--filter', 'label=b300-kit.job=' + job_id])
@@ -310,15 +340,16 @@ class JobManager:
                     temp, power = float(row[1]), float(row[2])
                     samples.append(dict(timestamp=time.time(), uuid=row[0], temperature_c=temp, power_w=power))
                 expected = self.jobs[job_id].get('expected_gpu_uuids') or None
-                validate_sample(samples, 8, expected)
+                validate_sample(samples, len(expected) if expected else self.jobs[job_id].get("gpus", 8), expected)
                 with self.lock:
                     self.samples = (self.samples + samples)[-240:]
-                if any(s['temperature_c'] >= self.max_temp for s in samples):
-                    self.stop(job_id, f'GPU 温度达到 {self.max_temp}°C，已触发停止。')
+                limit = self.jobs[job_id].get("max_temp", self.max_temp)
+                if any(s['temperature_c'] >= limit for s in samples):
+                    self.stop(job_id, f'GPU 温度达到 {limit}°C，已触发停止。')
                     return
             except (ValueError, IndexError):
                 try:
-                    self.stop(job_id, '遥测格式或八卡覆盖异常，已停止作业。')
+                    self.stop(job_id, '遥测格式或本次 GPU 覆盖异常，已停止作业。')
                 except ValueError:
                     pass
                 return
@@ -330,7 +361,8 @@ class JobManager:
         cleanup_completed = False
         try:
             environment = {**os.environ, 'B300_JOB_ID': job_id, 'BURN_SECONDS': str(job['seconds']),
-                           'MAX_GPU_TEMP': str(self.max_temp), 'PYTHONUNBUFFERED': '1'}
+                           'MAX_GPU_TEMP': str(job.get("max_temp", self.max_temp)), 'PYTHONUNBUFFERED': '1',
+                           "B300_GPUS": str(job.get("gpus", 8)), "HARDWARE_PROFILE": job.get("hardware_profile", "auto")}
             if self.gpu_lock is not None:
                 environment['B300_GPU_LOCK_FD'] = str(self.gpu_lock)
             commands = [self.command(job['profile'], out, job['seconds'])]
@@ -346,7 +378,7 @@ class JobManager:
                                                    stderr=subprocess.STDOUT, start_new_session=True,
                                                    pass_fds=(self.gpu_lock,) if self.gpu_lock is not None else ())
                         self.process = process
-                    if job['profile'] not in ('import-image', 'identity') and watcher is None:
+                    if job['profile'] not in ('import-image', 'identity', 'server') and watcher is None:
                         watcher = threading.Thread(target=self._watch, args=(job_id, done), daemon=True)
                         watcher.start()
                     rc = process.wait()
@@ -355,7 +387,8 @@ class JobManager:
             done.set()
             if watcher:
                 watcher.join(timeout=12)
-            self._cleanup_containers(job_id)
+            if job["profile"] != "server":
+                self._cleanup_containers(job_id)
             cleanup_completed = True
             summary = optional_json(out / 'summary.json')
             completed_at = utc_now()
@@ -457,7 +490,7 @@ class JobManager:
             jobs = [self.job_state(job) for job in sorted(self.jobs.values(), key=lambda j: j['started_at'], reverse=True)[:30]]
             active = next((j for j in jobs if j['id'] == self.active), None)
             return dict(platform=sys.platform, demo=self.preview, busy=self.active is not None, active_job=active,
-                        jobs=jobs, readiness=ready, profiles=[profile_eligibility(p, ready, self.preview) for p in PROFILES])
+                        hardware_profiles=hp.options(), defaults=dict(expected_gpus=0, hardware_profile="auto", memory_fraction=.85, max_temp=self.max_temp), jobs=jobs, readiness=ready, profiles=[profile_eligibility(p, ready, self.preview) for p in PROFILES])
 
     def close(self):
         if self.active:
@@ -591,7 +624,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', args.port), make_handler(manager))
     server.daemon_threads = True
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    print(f'B300 dashboard: http://127.0.0.1:{args.port} (localhost only)', flush=True)
+    print(f'Server acceptance dashboard: http://127.0.0.1:{args.port} (localhost only)', flush=True)
     print('Run evidence contains device serials and host information; review before sharing.', flush=True)
     try:
         server.serve_forever()

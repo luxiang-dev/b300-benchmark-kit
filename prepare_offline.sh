@@ -9,9 +9,10 @@ case "$arch" in x86_64|amd64) platform=linux/amd64; arch=amd64 ;; aarch64|arm64)
 echo "Preparing $platform package. GPU is not required on the preparation host."
 if [[ "$mode" != --hardware-only ]]; then python3 download_models.py; fi
 mkdir -p images
-docker pull --platform "$platform" nvcr.io/nvidia/pytorch:25.10-py3
+base_tag="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.10-py3}"
+docker pull --platform "$platform" "$base_tag"
 # Pin the pulled base by digest, then keep the resulting complete image by ID.
-base=$(docker image inspect nvcr.io/nvidia/pytorch:25.10-py3 --format '{{index .RepoDigests 0}}')
+base=$(docker image inspect "$base_tag" --format '{{index .RepoDigests 0}}')
 docker build --platform "$platform" --build-arg "BASE_IMAGE=$base" -t b300-test:1.0 .
 actual=$(docker image inspect b300-test:1.0 --format '{{.Architecture}}')
 [[ "$actual" == "$arch" ]] || { echo "Image architecture mismatch" >&2; exit 1; }

@@ -5,12 +5,13 @@ const $ = (id) => document.getElementById(id);
 const dom = {};
 document.querySelectorAll("[id]").forEach((node) => { dom[node.id] = node; });
 const profileInfo = {
-  identity: {title:"身份交叉检查", subtitle:"硬件身份 · 架构与驱动", category:"IDENTITY CHECK", icon:"◈", action:"开始身份检查", requires_gpus:0, requires_docker:false, requires_image:false, scope:["型号、UUID、PCI 与 VBIOS","满足条件时检查 CUDA 能力","显存与硬件身份一致性","逐卡异常与缺失证据"], description:"先采集主机身份，识别型号、架构和容量之间的不一致。仅在完整 8 卡与本地镜像可用时补充 CUDA 检查；缺失项目保留为未完成或需复核。", boundary:"结论是软件证据的一致性评估。驱动提供的名称、UUID 或序列号本身不能代替厂商认证；还应核对实物、采购记录与供应商信息。"},
-  authenticity: {title:"真实性负载", subtitle:"服务器抽查 · 显存 · 计算 · 互联", category:"HARDWARE VALIDATION", icon:"⌘", action:"开始真实性负载", requires_gpus:8, requires_docker:true, requires_image:true, scope:["逐卡身份与 CUDA 能力检查","服务器清单与 CPU / RAM / 结果盘抽查","显存容量与数据正确性压力","实际计算与 NCCL 互联负载","ECC、Xid、温度与原始日志"], description:"对整台 8×B300 服务器运行真实硬件负载，补充 CPU、RAM 与结果盘的小样本正确性检查，并采集存储、NIC、NUMA 与 BMC 清单。此项目无需大模型权重。", boundary:"服务器抽查默认只覆盖 256 MiB RAM 与 128 MiB 结果盘文件。全 RAM、全盘、NIC 远端线速和 OEM 人工验收仍需另行完成；本次通过仅适用于实际已执行的范围。"},
-  quick: {title:"快速功能", subtitle:"短压力 · Qwen · SDXL", category:"FUNCTIONAL SMOKE TEST", icon:"ϟ", action:"开始快速功能", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["短时计算与显存压力","PyTorch NCCL 通信","Qwen3-0.6B 每卡独立推理","SDXL 图像生成"], description:"在完整基础离线包上运行短时功能检查，确认计算、通信与模型推理可以工作，再安排完整功能测试。", boundary:"此处 Qwen 为每张卡独立副本，模型与精度不同，吞吐不能直接与 DeepSeek-R1 MLPerf 整机公测比较。"},
-  compare: {title:"NCCL 公测对比", subtitle:"8 卡整机 · 相同测试条件", category:"PUBLIC REFERENCE", icon:"⇄", action:"开始 NCCL 对比", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["8 张物理 B300 与环境检查","固定 nccl-tests 原始输出","8 GiB All-Reduce 对应条件","带宽、正确性与公测比例"], description:"运行与公开 8×B300 参考相对应的 NCCL 测试，保留原始输出与参数，比较整机通信能力。", boundary:"仅在卡数、数据大小、操作与数据类型等条件相符时比较。参考成绩是定位差异的依据，达不到某个比例本身不能证明是假卡。"},
-  full: {title:"完整功能测试", subtitle:"压力 · 公测 · 模型 · DCGM", category:"FULL FUNCTIONAL TEST", icon:"▦", action:"开始完整功能测试", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["600 秒计算与显存压力","NCCL 通信与公测对比","两种 Qwen 及 SDXL 推理","DCGM、ECC 与内核错误复核"], description:"运行基础包的全部功能项目，覆盖硬件压力、通信、两种文本模型、图像模型与诊断，汇总为一份技术报告。", boundary:"full/burn 需要可用的 DCGM。缺失诊断项目时报告保留为未完成。此项目不自动运行独立的 DeepSeek MLPerf 扩展，也不完成整机采购验收。"},
-  burn: {title:"持续压力", subtitle:"可选时长 · 完整功能测试后续", category:"SUSTAINED STRESS", icon:"◷", action:"开始持续压力", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["指定时长计算与显存压力","逐卡温度与功耗遥测","完整通信及模型功能测试","运行前后 ECC 与错误检查"], description:"延长压力阶段，观察整机供电、散热和稳定性；压力结束后继续执行完整功能测试的其他项目。", boundary:"所选时长仅指压力阶段，总运行时间还包含模型加载、通信和诊断。先通过短时检查，再运行较长负载。"},
+  server: {title:"整机检查（无需 GPU）", subtitle:"CPU · RAM · 存储 · NIC · BMC", category:"SERVER CHECK", icon:"▤", action:"开始整机检查", requires_gpus:0, scope:["CPU / DIMM / SSD / NIC 实测清单", "CPU、256 MiB RAM 与128 MiB结果盘抽查", "压力前后 SMART / BMC 健康复核", "内核 RAS 错误与原始证据导出"], description:"适用于无 GPU 服务器，也可对有 GPU 的机器单独检查主机部件。无需 Docker 或 NVIDIA 驱动。", boundary:"不自动覆盖全部 RAM、全部磁盘写读和 NIC 远端线速；仍需补齐采购 BOM、OEM诊断与人工验收。"},
+  identity: {title:"身份交叉检查", subtitle:"硬件身份 · 架构与驱动", category:"IDENTITY CHECK", icon:"◈", action:"开始身份检查", requires_gpus:0, requires_docker:false, requires_image:false, scope:["型号、UUID、PCI 与 VBIOS","满足条件时检查 CUDA 能力","显存与硬件身份一致性","逐卡异常与缺失证据"], description:"先采集主机身份，识别型号、架构和容量之间的不一致。仅在实际卡数与本地镜像可用时补充 CUDA 检查；缺失项目保留为未完成或需复核。", boundary:"结论是软件证据的一致性评估。驱动提供的名称、UUID 或序列号本身不能代替厂商认证；还应核对实物、采购记录与供应商信息。"},
+  authenticity: {title:"真实性负载", subtitle:"服务器抽查 · 显存 · 计算 · 互联", category:"HARDWARE VALIDATION", icon:"⌘", action:"开始真实性负载", requires_gpus:1, minimum_gpus:true, requires_docker:true, requires_image:true, scope:["逐卡身份与 CUDA 能力检查","服务器清单与 CPU / RAM / 结果盘抽查","显存容量与数据正确性压力","实际计算与 NCCL 互联负载","ECC、Xid、温度与原始日志"], description:"对当前 NVIDIA GPU 服务器运行真实硬件负载，补充 CPU、RAM 与结果盘的小样本正确性检查，并采集存储、NIC、NUMA 与 BMC 清单。此项目无需大模型权重。", boundary:"服务器抽查默认只覆盖 256 MiB RAM 与 128 MiB 结果盘文件。全 RAM、全盘、NIC 远端线速和 OEM 人工验收仍需另行完成；本次通过仅适用于实际已执行的范围。"},
+  quick: {title:"快速功能", subtitle:"短压力 · Qwen · SDXL", category:"FUNCTIONAL SMOKE TEST", icon:"ϟ", action:"开始快速功能", requires_gpus:1, minimum_gpus:true, requires_docker:true, requires_image:true, requires_bundle:true, scope:["短时计算与显存压力","PyTorch NCCL 通信","Qwen3-0.6B 每卡独立推理","SDXL 图像生成"], description:"在完整基础离线包上运行短时功能检查，确认计算、通信与模型推理可以工作，再安排完整功能测试。", boundary:"此处 Qwen 为每张卡独立副本，模型与精度不同，吞吐不能直接与 DeepSeek-R1 MLPerf 整机公测比较。"},
+  compare: {title:"8×B300 NCCL 公测对比", subtitle:"8 卡整机 · 相同测试条件", category:"PUBLIC REFERENCE", icon:"⇄", action:"开始 NCCL 对比", requires_gpus:8, requires_docker:true, requires_image:true, requires_bundle:true, scope:["8 张物理 B300 与环境检查","固定 nccl-tests 原始输出","8 GiB All-Reduce 对应条件","带宽、正确性与公测比例"], description:"运行与公开 8×B300 参考相对应的 NCCL 测试，保留原始输出与参数，比较整机通信能力。", boundary:"仅在卡数、数据大小、操作与数据类型等条件相符时比较。参考成绩是定位差异的依据，达不到某个比例本身不能证明是假卡。"},
+  full: {title:"完整功能测试", subtitle:"压力 · 公测 · 模型 · DCGM", category:"FULL FUNCTIONAL TEST", icon:"▦", action:"开始完整功能测试", requires_gpus:1, minimum_gpus:true, requires_docker:true, requires_image:true, requires_bundle:true, scope:["600 秒计算与显存压力","NCCL 通信与公测对比","两种 Qwen 及 SDXL 推理","DCGM、ECC 与内核错误复核"], description:"运行基础包的全部功能项目，覆盖硬件压力、通信、两种文本模型、图像模型与诊断，汇总为一份技术报告。", boundary:"DCGM、ECC、NVLink 按设备支持范围复核；缺失或不支持不计为已验证。此项目不自动运行独立的 DeepSeek MLPerf 扩展，也不完成整机采购验收。"},
+  burn: {title:"持续压力", subtitle:"可选时长 · 完整功能测试后续", category:"SUSTAINED STRESS", icon:"◷", action:"开始持续压力", requires_gpus:1, minimum_gpus:true, requires_docker:true, requires_image:true, requires_bundle:true, scope:["指定时长计算与显存压力","逐卡温度与功耗遥测","完整通信及模型功能测试","运行前后 ECC 与错误检查"], description:"延长压力阶段，观察整机供电、散热和稳定性；压力结束后继续执行完整功能测试的其他项目。", boundary:"所选时长仅指压力阶段，总运行时间还包含模型加载、通信和诊断。先通过短时检查，再运行较长负载。"},
   deepseek: {title:"DeepSeek MLPerf", subtitle:"R1 FP4 · v6.0 Offline", category:"MLPERF INFERENCE", icon:"◎", action:"开始 DeepSeek 测试", requires_gpus:8, requires_docker:true, requires_deepseek:true, scope:["官方固定源码、模型与数据校验","DeepSeek-R1 FP4 · TP8 / EP8","Offline 性能与准确率两阶段","8 卡整机 Tokens/s 公测对比"], description:"通过独立准备的官方运行环境，执行 DeepSeek-R1 的 MLPerf Inference v6.0 Offline 性能与准确率流程。完整负载耗时较长。", boundary:"必须提前完成独立资源和准确率缓存准备。参考为 8 卡整机 70,325.7 Tokens/s；本地测试结果不是 MLCommons 认证提交。"},
 };
 const stageLabels = {identity:"身份与架构检查", server:"服务器清单与 CPU / RAM / 结果盘抽查", "server-health-before":"压力前 SMART / BMC 健康", "server-health-after":"压力后 SMART / BMC 健康", "host-identity":"主机身份采集", "identity-host":"主机身份采集", "identity-cuda":"CUDA 身份检查", "identity-evaluation":"身份一致性评估", capacity:"显存容量与正确性", memory:"显存检查", environment:"GPU 运行环境", stress:"计算与显存压力", nccl:"PyTorch NCCL 通信", "nccl-public":"NCCL 公测对比", dcgm:"DCGM 诊断", preflight:"环境与资源预检", "llm-Qwen3-0.6B":"Qwen3-0.6B 推理", "llm-Qwen3-8B":"Qwen3-8B 推理", "image-SDXL-base-1.0":"SDXL 图像生成", "deepseek-r1-mlperf":"DeepSeek-R1 MLPerf", telemetry:"遥测采集", launcher:"测试启动与清理", report:"汇总报告", integrity:"资源完整性校验"};
@@ -84,6 +85,17 @@ function profile(id) {
   }
   return result;
 }
+function settings() {
+  return {hardware_profile:dom.hardwareProfile.value || "auto",expected_gpus:Number(dom.expectedGpus.value || 0),memory_fraction:Number(dom.memoryFraction.value || .85),max_temp:Number(dom.maxTemp.value || 85)};
+}
+let configuredOptions = false;
+function renderConfiguration() {
+  if (!configuredOptions && state?.hardware_profiles?.length) {
+    replace(dom.hardwareProfile,state.hardware_profiles.map((item) => { const option=node("option",null,item.title);option.value=item.id;return option; }));
+    dom.hardwareProfile.value="auto";configuredOptions=true;
+  }
+  [dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds].forEach((input) => {input.disabled=!!activeJob() || pendingMutation;});
+}
 function readiness() { return state?.readiness || {}; }
 const acceptanceStatement = "测试通过不等于采购验收完成。请勿仅依据 PASS 或身份信号一致判定整机验收通过或支付尾款。";
 const defaultAcceptanceChecks = [
@@ -129,10 +141,19 @@ function gate(id, ignoreBusy = false) {
   const tools = r.tools || {};
   const gpus = Array.isArray(r.gpus) ? r.gpus : [];
   if (!available(tools.python3)) return {ok:false, reason:"主机未检测到可用的 Python 3。"};
-  if (id !== "import-image" && !available(tools.nvidia_smi)) return {ok:false, reason:"主机未检测到可用的 nvidia-smi，请检查驱动。"};
+  if (!["import-image","server"].includes(id) && !available(tools.nvidia_smi)) return {ok:false, reason:"主机未检测到可用的 nvidia-smi，请检查驱动。"};
   const required = numeric(info.requires_gpus);
-  if (required !== null && required > 0 && gpus.length !== required) return {ok:false, reason:`此项目需要 ${required} 张物理 GPU，当前识别到 ${gpus.length} 张。`};
-  if (!["import-image","identity"].includes(id) && gpus.some((gpu) => !/\bB300\b/i.test(String(gpu.name || gpu.product_name || "")))) return {ok:false, reason:"存在型号名称不是 B300 的设备，请先核对主机。"};
+  if (required !== null && required > 0 && (info.minimum_gpus ? gpus.length < required : gpus.length !== required)) return {ok:false, reason:`此项目需要 ${required} 张物理 GPU，当前识别到 ${gpus.length} 张。`};
+  if (["compare","deepseek"].includes(id) && (gpus.length !== 8 || gpus.some((gpu) => !/\bB300\b/i.test(String(gpu.name || ""))))) return {ok:false, reason:"此参考/专项要求 8×B300；当前设备不能套用。"};
+  if (!["import-image","identity","server"].includes(id)) {
+    const target = settings();
+    if (target.expected_gpus && target.expected_gpus !== gpus.length) return {ok:false, reason:"实际卡数与采购目标不符；请先运行身份核验。"};
+    if (gpus.some((gpu) => !["Disabled","N/A","Not Supported"].includes(gpu.mig) || !["Enabled","N/A","Not Supported"].includes(gpu.ecc))) return {ok:false, reason:"需关闭 MIG，并确认支持的 ECC 已开启；状态未知需复核。"};
+    if (target.hardware_profile !== "auto" && target.hardware_profile !== "generic") {
+      const label = (state.hardware_profiles || []).find((p) => p.id === target.hardware_profile)?.title;
+      if (label && gpus.some((gpu) => !String(gpu.name).toUpperCase().includes(label.toUpperCase()))) return {ok:false, reason:"实际型号与选择的采购目标不符；请先运行身份核验。"};
+    }
+  }
   if (info.requires_docker && !available(tools.docker)) return {ok:false, reason:"Docker 不可用或无访问权限。"};
   if (info.requires_image && !available(r.image)) return {ok:false, reason:"尚未准备本地基础测试镜像。请完成离线准备或导入镜像。"};
   if (info.requires_bundle && r.bundle?.sealed !== true) return {ok:false, reason:"基础离线包尚未封存，请完成准备并校验资源。"};
@@ -188,7 +209,7 @@ function renderReadiness() {
     {name:"Docker",detail:"容器运行与访问权限",ok:available(tools.docker)},
     {name:"本地测试镜像",detail:r.image?.architecture ? `架构：${r.image.architecture}` : "身份检查与硬件负载",ok:available(r.image)},
     {name:"基础离线包",detail:"Qwen / SDXL / 公测资源",ok:r.bundle?.sealed === true},
-    {name:"8 张物理 B300",detail:`${gpus.length} 张设备已读取`,ok:gpus.length === 8 && gpus.every((gpu) => /\bB300\b/i.test(String(gpu.name || "")))},
+    {name:"物理 GPU 清单",detail:gpus.length ? `${gpus.length} 张设备已读取；型号逐卡核验` : "可选择无需 GPU 的整机检查",ok:gpus.length > 0},
   ];
   replace(dom.readinessList, rows.map((row) => {
     const item = node("div", "readiness-row");
@@ -217,15 +238,15 @@ function renderHardware() {
   dom.gpuCount.textContent = state ? String(gpus.length) : "—";
   const memories = gpus.map((gpu) => numeric(gpu.memory_mib));
   dom.totalMemory.textContent = gpus.length && memories.every((value) => value !== null) ? displayNumber(memories.reduce((sum,value) => sum + value,0) / 1024,1) : "—";
-  dom.gpuCountNote.textContent = gpus.length === 8 ? "8 卡整机 · 身份仍需交叉检查" : gpus.length ? "当前卡数与 8 卡公测条件不同" : connected ? "未读取到 GPU，请检查驱动与权限" : "等待 nvidia-smi 数据";
+  dom.gpuCountNote.textContent = gpus.length ? `${gpus.length} 卡 · 逐卡身份仍需交叉检查` : connected ? "无需 GPU 的整机检查可独立运行" : "等待 nvidia-smi 数据";
   dom.hardwareTag.textContent = gpus.length ? `${gpus.length} 张设备` : "无设备数据";
   if (!gpus.length) {
     const empty = node("div","empty-state");
-    empty.append(node("span","empty-symbol","◈"),node("strong",null,connected ? "尚未识别到 GPU" : "等待设备信息"),node("p",null,connected ? "请确认 NVIDIA 驱动可用，且服务在目标服务器运行。" : "连接测试主机后显示型号、UUID 和显存。"));
+    empty.append(node("span","empty-symbol","◈"),node("strong",null,connected ? "尚未识别到 GPU" : "等待设备信息"),node("p",null,connected ? "无 GPU 主机请选择整机检查；有 GPU 主机请确认驱动和权限。" : "连接测试主机后显示型号、UUID 和显存。"));
     replace(dom.gpuGrid,[empty]);
   } else {
     replace(dom.gpuGrid,gpus.map((gpu,index) => {
-      const card = node("div",`gpu-card${/\bB300\b/i.test(String(gpu.name || "")) ? "" : " unexpected"}`);
+      const card = node("div","gpu-card");
       const top = node("div","gpu-card-top");
       top.append(node("span","gpu-index",`GPU ${gpu.index ?? index}`),node("span","gpu-memory",`${displayNumber(numeric(gpu.memory_mib) === null ? null : Number(gpu.memory_mib) / 1024,1)} GiB`));
       card.append(top,node("div","gpu-name",gpu.name || gpu.product_name || "未提供型号"),node("div","gpu-uuid",gpu.uuid || "未提供 UUID"));
@@ -254,7 +275,7 @@ function renderProfiles() {
     const label = node("span");
     label.append(node("span","profile-title",info.title),node("span","profile-subtitle",info.subtitle));
     button.append(label,node("span","profile-arrow","›"));
-    button.addEventListener("click",() => { selectedProfile = id; renderProfiles(); renderSelected(); });
+    button.addEventListener("click",() => { selectedProfile = id; renderProfiles(); renderSelected(); renderReadiness(); renderWorkflow(); });
     return button;
   }));
 }
@@ -263,12 +284,12 @@ function renderSelected() {
   dom.selectedCategory.textContent = info.category;
   dom.selectedTitle.textContent = info.title;
   dom.selectedDescription.textContent = selectedProfile === "authenticity" && !/抽查|CPU|RAM/i.test(info.description || "") ? `${info.description} 同时采集服务器清单，并抽查 CPU、RAM 与结果盘。` : info.description;
-  dom.selectedRequirements.textContent = selectedProfile === "identity" ? "主机身份 · CUDA 按条件补充" : info.requires_deepseek ? "8 卡 · 独立 MLPerf 资源" : info.requires_bundle ? "8 卡 · 完整基础包" : `${info.requires_gpus || 8} 卡 · 本地镜像`;
+  dom.selectedRequirements.textContent = selectedProfile === "identity" ? "主机身份 · CUDA 按条件补充" : info.requires_deepseek ? "8 卡 · 独立 MLPerf 资源" : info.requires_bundle ? `${readiness().gpus?.length || "实际"} 卡 · 完整基础包` : selectedProfile === "server" ? "CPU 主机 · 无需 GPU" : `${readiness().gpus?.length || "实际"} 卡 · 本地镜像`;
   replace(dom.selectedScope,info.scope.map((text) => {
     const item = node("div","scope-item");item.append(node("span",null,"○"),node("div",null,text));return item;
   }));
   dom.profileBoundary.textContent = info.boundary;
-  dom.durationControl.hidden = selectedProfile !== "burn";
+  dom.durationControl.hidden = !["authenticity","burn"].includes(selectedProfile);
   const eligibility = gate(selectedProfile);
   dom.startButton.disabled = !eligibility.ok;
   dom.startButtonLabel.textContent = pendingMutation ? "正在提交…" : info.action;
@@ -279,21 +300,26 @@ function renderSelected() {
 function renderWorkflow() {
   const items = [
     {name:"运行条件",profiles:[],ready:true},
-    {name:"身份检查",profiles:["identity","authenticity"]},
-    {name:"真实负载",profiles:["authenticity","full","burn"]},
-    {name:"互联公测",profiles:["compare","full","burn"]},
-    {name:"模型推理",profiles:["quick","full","burn","deepseek"]},
+    {name:"身份检查",stages:["identity"]},
+    {name:"整机与GPU负载",stages:["server","memory","stress"]},
+    {name:"互联公测",stages:["nccl-public"]},
+    {name:"模型推理",stages:["llm-Qwen3-0.6B","llm-Qwen3-8B","image-SDXL-base-1.0","deepseek-r1-mlperf"]},
     {name:"报告复核",profiles:[],evidence:true},
   ];
   replace(dom.workflowSteps,items.map((item,index) => {
     let status = "PENDING";
-    if (item.ready) status = connected && gate("identity",true).ok ? "PASS" : "PENDING";
+    if (item.ready) status = connected && gate(selectedProfile,true).ok ? "PASS" : "PENDING";
     else if (item.evidence) {
       const job = jobs().find((entry) => entry.id === selectedJobId);
       if (job && Array.isArray(job.artifacts) && job.artifacts.length && rawStatus(job.status) !== "RUNNING") status = "REVIEW";
     } else {
-      const job = jobs().find((entry) => item.profiles.includes(entry.profile));
-      if (job) status = jobStatus(job);
+      const job = jobs().find((entry) => entry.id === selectedJobId);
+      const recorded = stagesFor(job).filter((entry) => item.stages.includes(entry.name));
+      if (recorded.length) {
+        const statuses=recorded.map((entry) => rawStatus(entry.status));
+        status=statuses.includes("FAIL") ? "FAIL" : statuses.includes("RUNNING") ? "RUNNING" : statuses.every((value) => value === "PASS") ? "PASS" : statuses.every((value) => value === "SKIP") ? "SKIP" : "REVIEW";
+        if (item.stages.includes("identity") && job.identity_summary?.status && status === "PASS") status=rawStatus(job.identity_summary.status);
+      }
     }
     const cls = ["PASS","CONSISTENT"].includes(status) ? " done" : status === "RUNNING" ? " running" : status === "FAIL" ? " failed" : "";
     const step = node("div",`workflow-step${cls}`);
@@ -461,7 +487,24 @@ function renderArtifacts(job) {
     return link;
   }));
 }
+function renderInventory(job) {
+  const inv=job?.summary?.observed_inventory;
+  dom.inventoryPanel.hidden=!inv;
+  if (!inv) return;
+  const labels={system:"服务器",cpu:"CPU",ram:"OS 可见 RAM",dimms:"DIMM",storage:"OS 可见磁盘",interfaces:"OS 接口",gpus:"GPU"};
+  replace(dom.inventoryGrid,Object.entries(labels).map(([key,label]) => {
+    const section=node("div","inventory-item");section.append(node("strong",null,label));
+    const content=node("pre",null,JSON.stringify(inv[key] || {status:"UNKNOWN"},null,2));section.append(content);return section;
+  }));
+  const notes=[...(job.summary.coverage_notes || []),`型号策略：${job.hardware_profile || job.summary.hardware_profile || "未指定"}；采购卡数：${job.expected_gpus || "未指定"}。`];
+  for (const [key,label] of Object.entries({nccl:"多卡通信",public_reference:"公测对比",dcgm:"DCGM诊断"})) {
+    const value=job.summary.coverage?.[key];
+    if (value) notes.push(`${label}：${value === "NOT_TESTED" ? "未测试" : value === "NOT_APPLICABLE" ? "本次不适用" : statusLabels[rawStatus(value)]}；跳过和不适用不计为已测通过。`);
+  }
+  replace(dom.coverageNotes,notes.map((note) => node("li",null,note)));
+}
 function renderJobDetail() {
+  renderInventory(jobs().find((item) => item.id === selectedJobId));
   const job = jobs().find((item) => item.id === selectedJobId) || (activeJob()?.id === selectedJobId ? activeJob() : null);
   dom.stopButton.hidden = !job || rawStatus(job.status) !== "RUNNING" || String(job.status).toUpperCase() === "EXPORTING";
   dom.stopButton.disabled = pendingMutation || !connected || state?.demo || state?.read_only;
@@ -495,6 +538,7 @@ function renderJobDetail() {
 }
 
 function render() {
+  renderConfiguration();
   dom.demoBanner.hidden = !state?.demo;
   const parts = location.host;
   dom.endpoint.textContent = parts || "127.0.0.1:8765";
@@ -526,8 +570,8 @@ async function startJob(requestedProfile = selectedProfile) {
   pendingMutation = true;dom.actionMessage.hidden = true;renderSelected();renderReadiness();
   try {
     if (!csrfToken) await session();
-    const payload = {profile:requestedProfile};
-    if (requestedProfile === "burn") payload.seconds = Number(dom.burnSeconds.value);
+    const payload = {profile:requestedProfile, ...settings()};
+    if (["authenticity","burn"].includes(requestedProfile)) payload.seconds = Number(dom.burnSeconds.value);
     const result = await api("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken},body:JSON.stringify(payload)});
     if (!result.id) throw new Error("主机未返回任务编号，请刷新后检查运行记录。");
     selectedJobId = result.id;selectionIsManual = false;
@@ -577,5 +621,6 @@ if ("IntersectionObserver" in window) {
   ["overview","workflow","evidence","guide"].forEach((id) => observer.observe(dom[id]));
 }
 document.addEventListener("visibilitychange",() => { if (!document.hidden) refresh(); });
+[dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds].forEach((input) => input.addEventListener("change",() => {renderSelected();}));
 render();
 session().catch((error) => { showAction(`操作会话尚未就绪：${error.message}`,true); }).finally(() => refresh());

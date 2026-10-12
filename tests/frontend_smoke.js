@@ -37,6 +37,7 @@ class Element {
 }
 const elements = ids.map((id) => Object.assign(new Element(), {id}));
 const byId = Object.fromEntries(elements.map((element) => [element.id, element]));
+byId.hardwareProfile.value="auto";byId.expectedGpus.value="0";byId.memoryFraction.value="0.85";byId.maxTemp.value="85";
 byId.connectionStatus.append(new Element("span"), new Element("span"));
 const document = {
   getElementById: (id) => byId[id],
@@ -120,6 +121,23 @@ async function main() {
   setState(base);
   assert.equal(evaluate("gate('authenticity').ok"), true);
   assert.equal(evaluate("gate('deepseek').ok"), true, "Readiness uses the backend configured field");
+  const cpuOnly={...base,readiness:{...base.readiness,gpus:[],tools:{python3:true,docker:false,nvidia_smi:false},image:{available:false}}};
+  setState(cpuOnly);
+  assert.equal(evaluate("gate('server').ok"),true,"CPU server workflow needs neither NVIDIA nor Docker");
+  assert.equal(evaluate("gate('identity').ok"),false);
+  const singleRTX={...base,readiness:{...base.readiness,gpus:[{name:"NVIDIA GeForce RTX 4090",uuid:"synthetic-only",mig:"N/A",ecc:"N/A",memory_mib:24576}]}};
+  setState(singleRTX);
+  assert.equal(evaluate("gate('authenticity').ok"),true,"One consumer GPU is valid for the generic hardware workload");
+  assert.equal(evaluate("gate('compare').ok"),false,"RTX cannot borrow B300 public reference");
+  assert.equal(evaluate("gate('deepseek').ok"),false,"Fixed TP8/EP8 project remains gated");
+  byId.expectedGpus.value="4";
+  assert.equal(evaluate("gate('authenticity').ok"),false,"Purchase GPU count must be honored");
+  assert.equal(evaluate("gate('identity').ok"),true,"Contradictory evidence remains collectable");
+  byId.expectedGpus.value="0";
+  const skippedPublic={id:"scope-only",profile:"full",status:"PASS",summary:{overall:"PASS"},stages:[{name:"stress",status:"PASS"},{name:"nccl-public",status:"SKIP"}],artifacts:[]};
+  setState({...base,jobs:[skippedPublic]});
+  assert.ok(textOf(byId.workflowSteps.children[3]).includes("已跳过"),"Overall PASS cannot turn skipped public stage green");
+  setState(base);
   evaluate("state.busy=true");
   assert.equal(evaluate("gate('authenticity').ok"), false, "No concurrent job");
   assert.equal(evaluate("gate('identity', true).ok"), true, "Readiness stays recognized during a job");

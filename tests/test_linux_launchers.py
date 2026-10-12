@@ -16,18 +16,19 @@ MOCK_TOOL = '''#!/usr/bin/env python3
 import datetime,json,os,pathlib,sys,time
 tool=pathlib.Path(sys.argv[0]).name
 args=sys.argv[1:]
+count=int(os.environ.get('MOCK_GPU_COUNT','8'))
 if tool == 'nvidia-smi':
     if '--query-compute-apps=pid' in args:
         sys.exit(0)
     if any(x.startswith('--query-gpu=') for x in args):
-        for i in range(8):
+        for i in range(count):
             print(datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S.%f') + f',{i},gpu{i},50,500,1000,98')
     elif '-x' in args:
         model=os.environ.get('MOCK_GPU_MODEL','NVIDIA B300')
         print('<nvidia_smi_log><driver_version>580.95.05</driver_version>' + ''.join(
           f'<gpu><uuid>gpu{i}</uuid><product_name>{model}</product_name><mig_mode><current_mig>Disabled</current_mig></mig_mode>'
           '<ecc_mode><current_ecc>Enabled</current_ecc></ecc_mode><ecc_errors><volatile><dram_uncorrectable>0</dram_uncorrectable></volatile></ecc_errors></gpu>'
-          for i in range(8)) + '</nvidia_smi_log>')
+          for i in range(count)) + '</nvidia_smi_log>')
     else: print('Synthetic hardware inventory, not a GPU measurement')
 elif tool == 'journalctl':
     print('kernel: synthetic test-window event')
@@ -103,11 +104,33 @@ class LinuxLauncherTests(unittest.TestCase):
 
     def test_gb300_is_rejected_before_any_container_load(self):
         self.env['MOCK_GPU_MODEL'] = 'NVIDIA GB300'
+        self.env['HARDWARE_PROFILE'] = 'b300'
         proc = self.run_mode('quick')
         self.assertNotEqual(proc.returncode, 0)
-        self.assertIn('GPU model is not B300', proc.stderr)
+        self.assertIn('GPU model differs from selected purchase profile', proc.stderr)
         if self.record.exists():
             self.assertFalse(any(json.loads(line)[0] == 'run' for line in self.record.read_text().splitlines()))
+
+    def test_single_h100_uses_one_worker_and_no_b300_public_reference(self):
+        self.env.update(MOCK_GPU_MODEL='NVIDIA H100', MOCK_GPU_COUNT='1')
+        proc = self.run_mode('quick')
+        self.assertEqual(proc.returncode, 42, proc.stdout + proc.stderr)
+        plan = json.loads((self.out / 'plan.json').read_text())
+        self.assertEqual(plan['gpus'], 1)
+        self.assertNotIn('nccl', plan['required'])
+        self.assertNotIn('nccl-public', plan['required'])
+        calls = [json.loads(line) for line in self.record.read_text().splitlines()]
+        run = next(call for call in calls if call[0] == 'run')
+        self.assertIn('--nproc-per-node=1', run)
+        self.assertEqual(run[run.index('--gpus') + 1], 'all')
+        self.assertEqual(run[-2:], ['--gpus', '1'])
+
+    def test_public_reference_rejects_h100_without_running_container(self):
+        self.env['MOCK_GPU_MODEL'] = 'NVIDIA H100'
+        proc = self.run_mode('compare')
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('requires exactly 8 B300', proc.stderr)
+        self.assertFalse(self.record.exists())
 
     def test_deepseek_failure_propagates_and_container_mounts_are_kept(self):
         repo, scratch = self.root / 'repo', self.root / 'scratch'

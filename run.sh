@@ -3,8 +3,8 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 profile="${1:-quick}"
 if [[ "$profile" == deepseek ]]; then exec bash "$ROOT/run_deepseek_mlperf.sh" "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-deepseek}"; fi
-if [[ "$profile" == identity || "$profile" == authenticity ]]; then exec python3 "$ROOT/run_authenticity.py" --profile "$profile" --out "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}" --image "${B300_IMAGE:-b300-test:1.0}"; fi
-case "$profile" in inventory|quick|full|burn|compare) ;; *) echo "Usage: bash run.sh [inventory|identity|authenticity|quick|full|burn|compare|deepseek] [output-directory]" >&2; exit 2 ;; esac
+if [[ "$profile" == identity || "$profile" == authenticity || "$profile" == server ]]; then exec python3 "$ROOT/run_authenticity.py" --profile "$profile" --out "${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}" --image "${B300_IMAGE:-b300-test:1.0}" --gpus "${B300_GPUS:-0}" --hardware-profile "${HARDWARE_PROFILE:-auto}" --seconds "${BURN_SECONDS:-600}"; fi
+case "$profile" in inventory|quick|full|burn|compare) ;; *) echo "Usage: bash run.sh [inventory|server|identity|authenticity|quick|full|burn|compare|deepseek] [output-directory]" >&2; exit 2 ;; esac
 if [[ "$profile" != inventory && -z "${B300_GPU_LOCK_FD:-}" ]]; then exec python3 "$ROOT/job_lock.py" -- bash "$ROOT/run.sh" "$@"; fi
 OUT="${2:-$PWD/b300-results/$(date +%Y%m%d-%H%M%S)-$profile}"
 mkdir -p -- "$OUT"
@@ -15,18 +15,33 @@ monitor_pid=""
 telemetry_start=""
 container_name="b300-test-$$-$(date +%s)"
 export ROOT OUT PROFILE="$profile"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+B300_GPUS="${B300_GPUS:-$(nvidia-smi -q -x | python3 -c 'import sys,xml.etree.ElementTree as E; print(len(E.fromstring(sys.stdin.read()).findall("gpu")))')}"
+export B300_GPUS
 python3 - <<'PY'
 import json,os,uuid,time
+import hardware_profiles as hp
+import authenticity,subprocess
+count=int(os.environ["B300_GPUS"])
+if not 1 <= count <= hp.MAX_GPUS: raise ValueError("GPU count must be 1–64")
+selected=os.environ.get("HARDWARE_PROFILE","auto")
+if selected not in hp.PROFILES: raise ValueError("Unknown hardware profile")
+gpus=authenticity.parse_smi_xml(subprocess.run(["nvidia-smi","-q","-x"],capture_output=True,check=True).stdout)["gpus"]
+public=hp.public_compatible(gpus)
 from pathlib import Path
 p=os.environ['PROFILE']
 required=[] if p=='inventory' else ['environment','stress','nccl','llm-Qwen3-0.6B','image-SDXL-base-1.0']
-if p in ('full','burn'): required += ['llm-Qwen3-8B','dcgm']
-if p in ('full','burn','compare'): required += ['nccl-public']
-if p=='compare': required=['environment','nccl-public']
+if p in ('full','burn'): required += ['llm-Qwen3-8B']
+if p in ("full","burn") and all(hp.matches("b300",gpu["name"]) for gpu in gpus): required.append("dcgm")
+if p in ('full','burn','compare') and public: required += ['nccl-public']
+if count == 1 and "nccl" in required: required.remove("nccl")
+if p=='compare':
+    if not public: raise ValueError("Public comparison requires exactly 8 B300 GPUs")
+    required=['environment','nccl-public']
 limit=int(os.environ.get('MAX_GPU_TEMP','85'))
 if not 1 <= limit < 120: raise ValueError('MAX_GPU_TEMP must be an integer from 1 to 119')
 seconds=60 if p=='quick' else int(os.environ.get('BURN_SECONDS','3600')) if p=='burn' else 600
-Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':8,'required':required,'max_gpu_temp':limit,
+Path(os.environ['OUT'],'plan.json').write_text(json.dumps({'profile':p,'gpus':count,'hardware_profile':selected,'required':required,'max_gpu_temp':limit,
     'result_contract':2,'run_id':uuid.uuid4().hex,'seconds':seconds,'matrix':8192,'start_epoch':time.time(),
     'stress_memory_fraction':float(os.environ.get('MEMORY_FRACTION','0.65')),'nccl_iterations':50}),encoding='utf-8')
 PY
@@ -72,13 +87,16 @@ python3 - <<'PY'
 import os,re,subprocess,xml.etree.ElementTree as ET
 from pathlib import Path
 gpus=ET.parse(Path(os.environ['OUT'],'before.xml')).getroot().findall('gpu')
-assert len(gpus)==8, f'Expected 8 GPUs, found {len(gpus)}'
+import hardware_profiles as hp
+count=int(os.environ["B300_GPUS"])
+assert len(gpus)==count, f"Expected {count} GPUs, found {len(gpus)}"
 for g in gpus:
-    assert re.search(r'\bB300\b',g.findtext('product_name','')), 'GPU model is not B300'
-    assert g.findtext('mig_mode/current_mig','Disabled') in ('Disabled','N/A'), 'Disable MIG before running this physical-GPU suite'
-    assert g.findtext('ecc_mode/current_ecc','Enabled') in ('Enabled','N/A'), 'Enable ECC before an acceptance test'
+    assert hp.matches(os.environ.get("HARDWARE_PROFILE","auto"),g.findtext("product_name","")), "GPU model differs from selected purchase profile"
+    assert g.findtext('mig_mode/current_mig') in ('Disabled','N/A','Not Supported'), 'Disable MIG and verify mode before running this physical-GPU suite'
+    allowed_ecc=('Enabled',) if hp.identify(g.findtext('product_name','')) == 'b300' else ('Enabled','N/A','Not Supported')
+    assert g.findtext('ecc_mode/current_ecc') in allowed_ecc, 'Enable supported ECC and verify status before an acceptance test'
 driver=ET.parse(Path(os.environ['OUT'],'before.xml')).getroot().findtext('driver_version','0')
-assert int(driver.split('.')[0]) >= 580, f'CUDA 13 package requires driver R580+; found {driver}'
+assert os.environ.get('HARDWARE_PROFILE','auto') != 'b300' or int(driver.split('.')[0]) >= 580, f'CUDA 13 package requires driver R580+; found {driver}'
 busy=subprocess.run(['nvidia-smi','--query-compute-apps=pid','--format=csv,noheader,nounits'],capture_output=True,text=True,check=True).stdout.strip()
 assert not busy, f'GPUs have running compute jobs (PIDs: {busy}); schedule an idle test window'
 PY
@@ -116,7 +134,7 @@ stage() {
     local rc=0
     # Long loading of eight model replicas is included in this wall-time limit.
     timeout --signal=TERM --kill-after=30s "${STAGE_TIMEOUT:-7200}" "${base[@]}" \
-        torchrun --standalone --nproc-per-node=8 /kit/gpu_test.py "$@" 2>&1 | tee "$OUT/$label.log" || rc=$?
+        torchrun --standalone --nproc-per-node="$B300_GPUS" /kit/gpu_test.py "$@" --gpus "$B300_GPUS" 2>&1 | tee "$OUT/$label.log" || rc=$?
     if (( rc == 0 )); then record "$label" PASS 0; else record "$label" FAIL "$rc"; exit "$rc"; fi
 }
 stage environment environment
@@ -136,8 +154,8 @@ seconds=60
 [[ "$profile" != full ]] || seconds=600
 [[ "$profile" != burn ]] || seconds="${BURN_SECONDS:-3600}"
 stage stress stress --seconds "$seconds" --max-temp "${MAX_GPU_TEMP:-85}" --memory-fraction "${MEMORY_FRACTION:-0.65}"
-stage nccl nccl --iterations 50
-if [[ "$profile" == full || "$profile" == burn ]]; then public_stage; fi
+if (( B300_GPUS > 1 )); then stage nccl nccl --iterations 50; else record nccl SKIP 0; fi
+if [[ "$profile" == full || "$profile" == burn ]] && python3 -c 'import json,os; from pathlib import Path; raise SystemExit(0 if "nccl-public" in json.loads(Path(os.environ["OUT"],"plan.json").read_text())["required"] else 1)'; then public_stage; fi
 if [[ "$profile" == quick ]]; then
     stage llm-Qwen3-0.6B llm --model /kit/models/Qwen3-0.6B --iterations 1 --batch 1 --tokens 32
     stage image-SDXL-base-1.0 image --model /kit/models/SDXL-base-1.0 --iterations 1 --steps 4
@@ -145,7 +163,7 @@ else
     stage llm-Qwen3-0.6B llm --model /kit/models/Qwen3-0.6B --iterations 3 --batch 4 --tokens 128
     stage llm-Qwen3-8B llm --model /kit/models/Qwen3-8B --iterations 3 --batch 4 --tokens 128
     stage image-SDXL-base-1.0 image --model /kit/models/SDXL-base-1.0 --iterations 3 --steps 20
-    if command -v dcgmi >/dev/null; then
+    if command -v dcgmi >/dev/null && python3 -c 'import os,authenticity,hardware_profiles as hp; from pathlib import Path; g=authenticity.parse_smi_xml(Path(os.environ["OUT"],"before.xml").read_bytes())["gpus"]; raise SystemExit(0 if all(hp.identify(x["name"]) in ("b300","b200","h200","h100","a100","a30","a40","a10","l40s","l40","l4","t4") for x in g) else 1)'; then
         dcgmi --version > "$OUT/dcgm-version.txt" 2>&1 || true
         if ! python3 - <<'PY'
 import os,re,sys
@@ -160,11 +178,11 @@ PY
             exit 0
         fi
         rc=0
-        timeout --signal=TERM --kill-after=30s "${DCGM_TIMEOUT:-10800}" dcgmi diag -r 3 -i 0,1,2,3,4,5,6,7 -j > "$OUT/dcgm.json" 2> "$OUT/dcgm.stderr" || rc=$?
+        timeout --signal=TERM --kill-after=30s "${DCGM_TIMEOUT:-10800}" dcgmi diag -r 3 -i "$(python3 -c 'import os;print(",".join(map(str,range(int(os.environ["B300_GPUS"])))))')" -j > "$OUT/dcgm.json" 2> "$OUT/dcgm.stderr" || rc=$?
         if (( rc == 0 )); then record dcgm PASS 0; else record dcgm FAIL "$rc"; exit "$rc"; fi
     else
         record dcgm SKIP 0
-        echo "DCGM absent: install B300-compatible DCGM 4.4+ on server. Full report will be INCOMPLETE."
+        echo "DCGM absent or model not in supported diagnostic scope. SKIP is not diagnostic PASS; required diagnostics remain INCOMPLETE."
     fi
 fi
 # cleanup captures final hardware evidence and produces both JSON and HTML.

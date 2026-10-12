@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 
 import authenticity
+import hardware_profiles as hp
 import memory_probe
 
 
@@ -63,12 +64,17 @@ def _common(result, plan, out):
     bus = authenticity.normalize_bus(result.get('pci_bus_id'))
     if bus is None or bus != authenticity.normalize_bus(gpu['pci_bus_id']):
         raise ValueError('pci_bus_id: worker and physical GPU disagree')
-    if result.get('capability') != authenticity.EXPECTED_CAPABILITY or any(type(x) is not int for x in result['capability']):
-        raise ValueError('capability: B300 compute capability must be 10.3')
+    selected = hp.policy(out, plan.get("hardware_profile"))
+    expected = hp.capability_for(gpu["name"], selected)
+    if not hp.valid_capability(result.get("capability")) or (expected and result["capability"] != expected):
+        raise ValueError("capability: architecture differs from the GPU profile")
     total = _integer(result.get('total_memory_bytes'), 'total_memory_bytes')
     nvml = gpu['memory_total_bytes']
-    if type(nvml) is not int or nvml <= 0 or abs(total - nvml) > max(2 * 2**30, nvml * .02):
+    tolerance = max(2 * 2**30 if hp.identify(gpu['name']) == 'b300' else 256 * 2**20, (nvml or 0) * .02)
+    if type(nvml) is not int or nvml <= 0 or abs(total - nvml) > tolerance:
         raise ValueError('total_memory_bytes: CUDA and physical inventory disagree')
+    if result.get('test') == 'environment' and str(result.get('gpu', '')).removeprefix('NVIDIA ').strip() != gpu['name'].removeprefix('NVIDIA ').strip():
+        raise ValueError('environment GPU name disagrees with the bound inventory')
     host = Path(out) / 'identity-host.json'
     if 'identity' in plan.get('required', []):
         if not host.is_file() or result.get('identity_host_sha256') != hashlib.sha256(host.read_bytes()).hexdigest():
@@ -93,10 +99,10 @@ def _common(result, plan, out):
 
 
 def _environment(result, total):
-    if result.get('bf16_correctness') is not True:
+    if (result.get("bf16_correctness") if result["capability"][0] >= 8 else result.get("fp32_correctness")) is not True:
         raise ValueError('environment.bf16_correctness evidence is missing or failed')
-    if not re.search(r'\bB300\b', str(result.get('gpu', ''))):
-        raise ValueError('environment.gpu does not identify B300')
+    if not isinstance(result.get("gpu"), str) or not result["gpu"].strip():
+        raise ValueError("environment.gpu name is missing")
     _equal_number(result.get('memory_gib'), total / 2**30, 'environment.memory_gib')
     for field in ('torch', 'cuda'):
         if not isinstance(result.get(field), str) or not result[field].strip():
@@ -114,7 +120,7 @@ def _stress(result, plan, total):
     if _number(result.get('duration_s'), 'stress.duration_s') < seconds:
         raise ValueError('stress.duration_s is shorter than the requested test')
     matrix = _integer(result.get('matrix'), 'stress.matrix', 256)
-    if matrix != plan.get('matrix', 8192) or matrix > 16384 or matrix % 256 or result.get('dtype') != 'BF16':
+    if matrix != plan.get('matrix', 8192) or matrix > 16384 or matrix % 256 or result.get('dtype') != ("BF16" if result["capability"][0] >= 8 else "FP32"):
         raise ValueError('stress matrix or dtype differs from the requested workload')
     iterations = _integer(result.get('gemm_iterations'), 'stress.gemm_iterations')
     if iterations % 20:
@@ -210,7 +216,7 @@ def _model(result, total, out):
         batch = _integer(result.get('batch'), 'llm.batch')
         tokens = _integer(result.get('forced_output_tokens'), 'llm.forced_output_tokens')
         _integer(result.get('input_tokens_per_request'), 'llm.input_tokens_per_request')
-        if len(latencies) != iterations or result.get('dtype') != 'BF16':
+        if len(latencies) != iterations or result.get('dtype') != ("BF16" if result["capability"][0] >= 8 else "FP32"):
             raise ValueError('llm: requested iterations or dtype is inconsistent')
         _equal_number(result.get('tokens_per_second'), iterations * batch * tokens / sum(latencies), 'llm.tokens_per_second')
         _number(result.get('aggregate_tokens_per_second'), 'llm.aggregate_tokens_per_second')

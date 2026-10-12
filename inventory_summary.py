@@ -247,6 +247,10 @@ def derive(out):
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         gap('smbios', error)
     try:
+        if (out / 'plan.json').is_file() and json.loads((out / 'plan.json').read_text(encoding='utf-8')).get('profile') == 'server':
+            result['gpus'].update(status='NOT_TESTED', devices=[], scope='CPU/server-only workflow does not establish GPU presence or absence')
+            authenticity.write_json(out / 'observed-inventory.json', result)
+            return result
         host_path = out / 'identity-host.json'
         if host_path.is_symlink():
             raise ValueError('Identity host metadata is a symbolic link')
@@ -264,7 +268,7 @@ def derive(out):
             if plan_path.is_symlink():
                 raise ValueError('Plan is a symbolic link')
             candidate = json.loads(plan_path.read_text(encoding='utf-8')).get('gpus')
-            if type(candidate) is int and 1 <= candidate <= 8:
+            if type(candidate) is int and 1 <= candidate <= 64:
                 expected = candidate
             else:
                 raise ValueError('Plan GPU count is unavailable or invalid')

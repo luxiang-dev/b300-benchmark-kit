@@ -2063,3 +2063,5 @@ main{
     grid-template-columns:minmax(0,1fr)
   }
 }
+
+.config-panel{margin-bottom:20px}.config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.config-grid label{display:flex;flex-direction:column;gap:8px;font-size:13px}.config-grid select,.config-grid input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text);box-sizing:border-box}.config-grid small{color:var(--muted)}.inventory-item{min-width:0}.inventory-item pre{font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:250px;overflow:auto}.inventory-panel{margin:20px 0}@media(max-width:600px){.config-grid{grid-template-columns:1fr}}

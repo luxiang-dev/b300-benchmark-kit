@@ -1,7 +1,7 @@
 """Keep technical test outcomes distinct from a buyer's final acceptance."""
 
 PENDING = [
-    ('purchase_bom', '采购清单逐项核对：整机型号、CPU、DIMM、SSD、NIC、PSU 和 8 张 GPU 的具体 SKU/序列号'),
+    ('purchase_bom', '采购清单逐项核对：整机型号、CPU、DIMM、SSD、NIC、PSU，以及约定 GPU 数量、具体 SKU/序列号'),
     ('vendor_confirmation', '实物板标签、厂商序列号/保修资格、供货来源及整机部件身份确认'),
     ('extended_cpu_ram', '按该机型验收规范完成 CPU 全核与主机内存完整诊断，复核 ECC/RAS'),
     ('storage', '全部合同存储设备的健康、寿命、容量和介质诊断；临时文件抽查不能替代'),

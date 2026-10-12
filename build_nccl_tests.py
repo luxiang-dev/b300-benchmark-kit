@@ -70,15 +70,21 @@ def main():
     # Keep the default toolkit linker flags and add the exact selected library path.
     with (source / "src/common.mk").open("a") as stream:
         stream.write(f"\nNVLDFLAGS += -Xlinker -rpath -Xlinker {library.parent}\n")
+    supported = subprocess.run(["nvcc", "--list-gpu-code"], check=True, capture_output=True, text=True).stdout
+    codes = sorted(set(re.findall(r"sm_([0-9]+)\b", supported)), key=int)
+    if not codes:
+        raise RuntimeError("Cannot enumerate CUDA compiler architectures")
+    gencode = " ".join(f"-gencode=arch=compute_{code},code=sm_{code}" for code in codes)
+    gencode += f" -gencode=arch=compute_{codes[-1]},code=compute_{codes[-1]}"
     subprocess.run(["make", "-j", str(min(os.cpu_count() or 2, 8)), "MPI=0", f"NCCL_HOME={stage}",
-                    "NVCC_GENCODE=-gencode=arch=compute_100,code=sm_100 -gencode=arch=compute_100,code=compute_100"],
+                    "NVCC_GENCODE=" + gencode],
                    cwd=source, check=True)
     binary = source / "build/all_reduce_perf"
     dependencies = subprocess.run(["ldd", str(binary)], check=True, capture_output=True, text=True).stdout
     print(dependencies)
     if "not found" in dependencies:
         raise RuntimeError("nccl-tests has unresolved runtime libraries")
-    manifest = dict(nccl_tests_revision=REVISION, source_sha256=SOURCE_SHA256, cuda=torch.version.cuda,
+    manifest = dict(compiled_architectures=codes, nccl_tests_revision=REVISION, source_sha256=SOURCE_SHA256, cuda=torch.version.cuda,
                     torch=torch.__version__, nccl_library=str(library), nccl_header=str(header),
                     nccl_selection="pytorch_loaded" if str(library) in loaded else "existing_matching_version",
                     binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest())

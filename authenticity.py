@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""B300 identity observations, cross-checks and light CUDA correctness probes.
+"""NVIDIA GPU identity observations, cross-checks and light CUDA correctness probes.
 
 This is evidence of consistency, not vendor authentication. NVIDIA's driver,
 CUDA and Linux PCI views share a trust boundary; none proves a serial number is
@@ -20,6 +20,7 @@ import sys
 import traceback
 import uuid
 import xml.etree.ElementTree as ET
+import hardware_profiles as hp
 
 
 SOURCES = {
@@ -32,7 +33,7 @@ SOURCES = {
 EXPECTED_CAPABILITY = [10, 3]
 KNOWN_PCI_VARIANT = {"vendor": "10de", "device": "3182", "subsystem_vendor": "10de", "subsystem_device": "20e6"}
 BOUNDARY = (
-    "CONSISTENT only means these software observations agree with the known B300 profile. "
+    "CONSISTENT only means these software observations agree with the selected or recognized GPU profile. "
     "They do not authenticate hardware against forged firmware, a hostile driver or hypervisor. "
     "Confirm the physical board label/serial, OEM invoice and BMC inventory with the vendor; "
     "functional, HBM capacity, ECC and performance tests are separate evidence."
@@ -269,7 +270,7 @@ def collect_cuda(out: Path, expected_gpus: int) -> dict:
               "torch": torch.__version__, "cuda_runtime": torch.version.cuda,
               "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"), "boundary": BOUNDARY}
     try:
-        if not 1 <= expected_gpus <= 8 or world != expected_gpus or torch.cuda.device_count() != expected_gpus:
+        if not 1 <= expected_gpus <= hp.MAX_GPUS or world != expected_gpus or torch.cuda.device_count() != expected_gpus:
             raise RuntimeError(f"Expected {expected_gpus} GPUs/workers, got {torch.cuda.device_count()} / {world}")
         torch.cuda.set_device(rank)
         props = torch.cuda.get_device_properties(rank)
@@ -285,20 +286,23 @@ def collect_cuda(out: Path, expected_gpus: int) -> dict:
         reference = left @ right
         calculated = left.to(device="cuda", dtype=torch.float32) @ right.to(device="cuda", dtype=torch.float32)
         fp32_correct = torch.equal(calculated.cpu().to(torch.float64), reference.to(torch.float64))
-        bf16 = torch.ones((128, 128), device="cuda", dtype=torch.bfloat16)
-        bf16_correct = bool(((bf16 @ bf16) == 128).all().item())
+        bf16_supported = torch.cuda.get_device_capability(rank)[0] >= 8
+        bf16_correct = None
+        if bf16_supported:
+            bf16 = torch.ones((128, 128), device="cuda", dtype=torch.bfloat16)
+            bf16_correct = bool(((bf16 @ bf16) == 128).all().item())
         pattern = torch.arange(262144, device="cuda", dtype=torch.int32)
         pattern.mul_(17).bitwise_xor_(0x5A5A5A5A)
         expected = (torch.arange(262144, dtype=torch.int32) * 17) ^ 0x5A5A5A5A
         memory_correct = torch.equal(pattern.cpu(), expected)
         torch.cuda.synchronize()
         result["correctness"] = {"fp32_cpu_reference": fp32_correct, "bf16_tensor_matrix": bf16_correct,
-                                 "integer_memory_pattern": memory_correct, "memory_tested_bytes": pattern.numel() * pattern.element_size(),
+                                 "bf16_supported": bf16_supported, "integer_memory_pattern": memory_correct, "memory_tested_bytes": pattern.numel() * pattern.element_size(),
                                  "note": "Light 1 MiB pattern only; full HBM allocation/write/read and sustained load run separately."}
         result["driver_identity"] = cuda_driver_identity()
         result["uuid"] = result["driver_identity"].get("uuid") or result["torch_uuid"]
         result["pci_bus_id"] = result["driver_identity"].get("pci_bus_id")
-        result["status"] = "PASS" if all((fp32_correct, bf16_correct, memory_correct)) else "FAIL"
+        result["status"] = "PASS" if all((fp32_correct, bf16_correct if bf16_supported else True, memory_correct)) else "FAIL"
         if result["status"] == "FAIL":
             result["error"] = "CUDA correctness mismatch"
     except Exception as error:
@@ -349,10 +353,11 @@ def validate_host_shape(host):
         raise ValueError("Invalid host evidence structure")
 
 
-def evaluate_identity(out: Path, expected_gpus: int) -> dict:
-    if isinstance(expected_gpus, bool) or not isinstance(expected_gpus, int) or not 1 <= expected_gpus <= 8:
-        raise ValueError("expected_gpus must be an integer from 1 to 8")
+def evaluate_identity(out: Path, expected_gpus: int, hardware_profile=None) -> dict:
+    if isinstance(expected_gpus, bool) or not isinstance(expected_gpus, int) or not 1 <= expected_gpus <= hp.MAX_GPUS:
+        raise ValueError("expected_gpus must be an integer from 1 to 64")
     out = Path(out)
+    selected = hp.policy(out, hardware_profile)
     findings, per_gpu, evidence_hashes = [], [], {}
     def add(severity, code, detail, gpu=None):
         item = {"severity": severity, "code": code, "detail": detail}
@@ -461,13 +466,20 @@ def evaluate_identity(out: Path, expected_gpus: int) -> dict:
             add("REVIEW", "host_uuid_invalid", "Host GPU UUID is missing or invalid.", key)
         if not bus:
             add("REVIEW", "host_pci_address_invalid", "Host GPU PCI address is missing or invalid.", key)
-        if not re.search(r"\bB300\b", gpu["name"]):
-            add("FAIL", "host_name_mismatch", f"Expected B300; host reports {gpu['name']!r}.", key)
+        if not hp.matches(selected, gpu["name"]):
+            add("FAIL", "host_name_mismatch", f"Expected {selected}; host reports {gpu['name']!r}.", key)
+        recognized = hp.identify(gpu["name"])
+        summary["recognized_profile"] = recognized
+        summary["features"] = {"ecc": "SUPPORTED" if gpu["ecc_current"] in ("Enabled", "Disabled") else "NOT_AVAILABLE", "mig": gpu["mig_mode"]}
+        if recognized == "generic":
+            add("REVIEW", "unlisted_model", "Model has no built-in architecture rule; verify exact SKU with the OEM.", key)
+        if gpu["ecc_current"] == "Disabled":
+            add("REVIEW", "ecc_disabled", "Supported ECC is disabled; enable it before procurement testing.", key)
         if gpu["serial"] in ("", "N/A", "Not Supported"):
             add("REVIEW", "serial_unavailable", "Board serial is unavailable; obtain the label/BMC/OEM record.", key)
         if gpu["vbios_version"] in ("", "N/A", "Not Supported"):
             add("REVIEW", "vbios_unavailable", "VBIOS version is unavailable.", key)
-        if gpu["mig_mode"] not in ("Disabled",):
+        if gpu["mig_mode"] not in ("Disabled", "N/A", "Not Supported"):
             add("REVIEW", "mig_or_unknown_mode", f"MIG mode is {gpu['mig_mode']!r}; this workflow expects full physical GPUs.", key)
         if gpu["virtualization_mode"] not in ("None", "N/A", "Not Supported"):
             add("REVIEW", "vgpu_or_unknown_mode", f"GPU virtualization mode is {gpu['virtualization_mode']!r}.", key)
@@ -479,7 +491,7 @@ def evaluate_identity(out: Path, expected_gpus: int) -> dict:
             add("FAIL", "pci_vendor_mismatch", f"Linux PCI vendor is {ids['vendor']}, expected NVIDIA 10de.", key)
         if any(not value for value in ids.values()):
             add("REVIEW", "pci_ids_missing", "Linux PCI vendor/device/subsystem evidence is incomplete.", key)
-        elif ids != KNOWN_PCI_VARIANT:
+        elif recognized == "b300" and ids != KNOWN_PCI_VARIANT:
             add("REVIEW", "unknown_pci_variant", f"PCI IDs {ids} differ from the documented SXM6 AC variant; confirm this SKU with the OEM.", key)
         if values.get("driver") != "nvidia":
             add("REVIEW", "pci_driver_unknown", f"Linux PCI driver is {values.get('driver')!r}.", key)
@@ -500,10 +512,11 @@ def evaluate_identity(out: Path, expected_gpus: int) -> dict:
             add("REVIEW", "cuda_uuid_unmatched", "No unique CUDA worker UUID matches this physical GPU.", key)
             continue
         summary.update(cuda_name=item.get("name"), capability=item.get("capability"), cuda_memory_bytes=item.get("total_memory_bytes"))
-        if not re.search(r"\bB300\b", str(item.get("name", ""))):
+        if str(item.get("name", "")).removeprefix("NVIDIA ").strip() != gpu["name"].removeprefix("NVIDIA ").strip():
             add("FAIL", "cuda_name_mismatch", f"CUDA reports {item.get('name')!r}.", key)
-        if item.get("capability") != EXPECTED_CAPABILITY:
-            add("FAIL", "compute_capability_mismatch", f"B300 requires compute capability 10.3; CUDA reports {item.get('capability')!r}.", key)
+        expected_capability = hp.capability_for(gpu["name"], selected)
+        if not hp.valid_capability(item.get("capability")) or (expected_capability and item.get("capability") != expected_capability):
+            add("FAIL", "compute_capability_mismatch", f"Expected architecture {expected_capability}; CUDA reports {item.get('capability')!r}.", key)
         torch_uuid = item.get("torch_uuid")
         if torch_uuid and normalize_uuid(torch_uuid) != key:
             add("FAIL", "torch_driver_uuid_mismatch", "PyTorch and CUDA driver UUIDs disagree.", key)
@@ -515,17 +528,19 @@ def evaluate_identity(out: Path, expected_gpus: int) -> dict:
         correctness = item.get("correctness", {})
         if not isinstance(correctness, dict):
             correctness = {}
-        if any(correctness.get(field) is not True for field in ("fp32_cpu_reference", "bf16_tensor_matrix", "integer_memory_pattern")):
+        if any(correctness.get(field) is not True for field in ("fp32_cpu_reference", "integer_memory_pattern")):
             add("FAIL", "cuda_correctness_missing_or_failed", "One or more CUDA correctness checks are missing or failed.", key)
+        if hp.valid_capability(item.get("capability")) and item["capability"][0] >= 8 and correctness.get("bf16_tensor_matrix") is not True:
+            add("FAIL", "bf16_correctness_failed", "BF16 is expected for this architecture but its correctness check failed or is missing.", key)
         nvml_memory, cuda_memory = gpu["memory_total_bytes"], item.get("total_memory_bytes")
         if not positive_integer(cuda_memory) or not positive_integer(nvml_memory):
             add("REVIEW", "memory_observation_invalid", "CUDA/NVML exposed memory is unavailable or invalid.", key)
         else:
             difference = abs(cuda_memory - nvml_memory)
-            tolerance = max(2 * 2**30, int(nvml_memory * 0.02))
+            tolerance = max((2 * 2**30 if recognized == 'b300' else 256 * 2**20), int(nvml_memory * 0.02))
             if difference > tolerance:
                 add("REVIEW", "memory_views_differ", f"CUDA/NVML memory differs by {difference} bytes; check reservation/ECC/MIG and OEM specification.", key)
-            if not 230 * 2**30 <= cuda_memory <= 300 * 2**30:
+            if recognized == "b300" and not 230 * 2**30 <= cuda_memory <= 300 * 2**30:
                 add("REVIEW", "memory_outside_conservative_range", "Exposed memory lies outside the conservative 230–300 GiB range; compare exact SKU/driver/ECC with the OEM before judging.", key)
     host_uuids = {normalize_uuid(gpu["uuid"]) for gpu in gpus}
     for item in cuda:
@@ -539,10 +554,11 @@ def evaluate_identity(out: Path, expected_gpus: int) -> dict:
         item["status"] = "FAIL" if any(f["severity"] == "FAIL" for f in relevant) else "REVIEW" if any(f["severity"] == "REVIEW" for f in relevant) else "CONSISTENT"
     status = "FAIL" if any(f["severity"] == "FAIL" for f in findings) else "REVIEW" if any(f["severity"] == "REVIEW" for f in findings) else "CONSISTENT"
     result = {"schema_version": 1, "test": "identity-summary", "time_utc": utc_now(), "status": status,
+              "hardware_profile": selected, "purchase_model_verified": False,
               "expected_gpus": expected_gpus, "observed_host_gpus": len(gpus), "observed_cuda_workers": len(cuda),
               "findings": findings, "per_gpu": per_gpu, "evidence_sha256": evidence_hashes,
               "boundary": BOUNDARY, "vendor_confirmation": "NOT_PERFORMED",
-              "memory_note": "Official material uses 288 GB physical capacity and 270 GB SKU capacity; CUDA/NVML exposed bytes, ECC and driver reserves differ. No fixed 288 GiB pass threshold is used.",
+              "memory_note": "Capacity is observed, not a purchase promise. Verify exact SKU, GB/GiB units, ECC and driver reservations against the written BOM.",
               "sources": SOURCES}
     write_json(out / "identity-summary.json", result)
     return result
@@ -552,7 +568,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("host", "cuda", "evaluate"))
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--gpus", type=int, choices=range(1, 9), default=8)
+    parser.add_argument("--gpus", type=int, choices=range(1, hp.MAX_GPUS + 1), default=8)
     args = parser.parse_args()
     if args.phase == "host":
         result = collect_host(args.out)

@@ -242,8 +242,8 @@ class DashboardEligibilityTests(unittest.TestCase):
                     self.assertTrue(dashboard.profile_eligibility(profile, readiness_fixture(8))["available"])
 
     def test_gpu_profiles_fail_closed_on_count_model_mig_ecc_or_busy(self):
-        cases = [readiness_fixture(7), readiness_fixture(9)]
-        for key, value in (("name", "NVIDIA GB300"), ("mig", "Enabled"), ("ecc", "N/A")):
+        cases = [readiness_fixture(0), readiness_fixture(65)]
+        for key, value in (("mig", "Enabled"), ("ecc", "N/A")):
             ready = readiness_fixture(8)
             ready["gpus"][0][key] = value
             cases.append(ready)

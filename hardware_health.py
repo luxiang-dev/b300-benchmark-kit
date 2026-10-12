@@ -45,7 +45,7 @@ def nvlink_counters(path):
     return values
 
 
-def evaluate(out, strict=False):
+def evaluate(out, strict=False, generic=False):
     out = Path(out)
     failures, review = [], []
     try:
@@ -58,12 +58,13 @@ def evaluate(out, strict=False):
             baseline = before.get(gpu_uuid)
             if baseline is None:
                 continue
+            ecc_required = strict and (not generic or current.findtext("ecc_mode/current_ecc") == "Enabled")
             for scope in ('volatile', 'aggregate'):
                 old = leaves(baseline.find('ecc_errors/' + scope))
                 new = leaves(current.find('ecc_errors/' + scope))
-                if strict and not new:
+                if ecc_required and not new:
                     review.append(f'{gpu_uuid}: {scope} ECC 计数缺失或不可读。')
-                if strict and 'dram_uncorrectable' not in new and not any('dram' in key and ('uncorrectable' in key or 'double_bit' in key) for key in new):
+                if ecc_required and 'dram_uncorrectable' not in new and not any('dram' in key and ('uncorrectable' in key or 'double_bit' in key) for key in new):
                     review.append(f'{gpu_uuid}: {scope} DRAM 不可纠正 ECC（dram_uncorrectable）计数不可读。')
                 threshold = current.findtext('ecc_errors/' + scope + '/sram_threshold_exceeded')
                 if threshold in ('Yes', 'True', '1'):
@@ -85,19 +86,19 @@ def evaluate(out, strict=False):
             remap = current.find('remapped_rows')
             previous = baseline.find('remapped_rows')
             if remap is None:
-                if strict:
+                if strict and not generic:
                     review.append(f'{gpu_uuid}: 显存行重映射信息不可读。')
             else:
                 pending = remap.findtext('pending')
                 if pending in ('Yes', 'Pending'):
                     failures.append(f'{gpu_uuid}: 显存行重映射 pending，不能视为健康通过。')
-                elif strict and pending != 'No':
+                elif strict and not generic and pending != 'No':
                     review.append(f'{gpu_uuid}: 行重映射 pending 状态不可确认。')
                 for field in ('correctable_error', 'uncorrectable_error'):
                     now = leaves(remap).get(field)
                     old = leaves(previous).get(field)
                     if now is None or old is None:
-                        if strict:
+                        if strict and not generic:
                             review.append(f'{gpu_uuid}: 行重映射 {field} 前后计数不可读。')
                     elif now > old:
                         (failures if field == 'uncorrectable_error' else review).append(f'{gpu_uuid}: 行重映射 {field} 增加 {now-old}。')
@@ -110,11 +111,11 @@ def evaluate(out, strict=False):
                         review.append(f'{gpu_uuid}: 显存重映射备用行 {field}={count}，需厂商复核。')
             fabric = current.find('fabric')
             if fabric is None:
-                if strict:
+                if strict and not generic:
                     review.append(f'{gpu_uuid}: NVSwitch fabric 状态不可读，需 OEM 复核。')
-            elif fabric.findtext('state') not in ('Completed',):
+            elif fabric.findtext("state") not in (("Completed", "N/A", "Not Supported") if generic else ("Completed",)):
                 review.append(f'{gpu_uuid}: fabric state={fabric.findtext("state")} 未确认完成。')
-            elif fabric.findtext('status') not in ('Success', 'NVML_SUCCESS'):
+            elif fabric.findtext("state") == "Completed" and fabric.findtext("status") not in ("Success", "NVML_SUCCESS"):
                 failures.append(f'{gpu_uuid}: fabric status={fabric.findtext("status")} 非 Success。')
             if fabric is not None:
                 health = fabric.find('health')
@@ -128,18 +129,21 @@ def evaluate(out, strict=False):
             recovery = current.findtext('gpu_recovery_action')
             if recovery not in (None, 'None', 'N/A', 'No Action'):
                 failures.append(f'{gpu_uuid}: GPU Recovery Action={recovery}，不能继续按健康通过。')
-        if strict:
+        require_nvlink = strict and not generic
+        link_raw = (out / "nvlink.txt").read_text(encoding="utf-8", errors="replace") if (out / "nvlink.txt").is_file() else ""
+        has_links = bool(re.search(r"Link\s+\d+", link_raw, re.I))
+        if require_nvlink:
             for name in ('topology.txt', 'nvlink.txt'):
                 if not (out / name).is_file() or not (out / name).read_text(encoding='utf-8', errors='replace').strip():
                     review.append(name + ': 互联拓扑/链路证据缺失。')
-        if (out / 'nvlink.txt').is_file() and re.search(r'\bInactive\b|\bSleep\b|Not Supported|Error', (out / 'nvlink.txt').read_text(encoding='utf-8', errors='replace'), re.IGNORECASE):
+        if (require_nvlink or has_links) and (out / 'nvlink.txt').is_file() and re.search(r'\bInactive\b|\bSleep\b|Not Supported|Error', (out / 'nvlink.txt').read_text(encoding='utf-8', errors='replace'), re.IGNORECASE):
             review.append('NVLink 链路状态包含 Inactive/Sleep/不可读；需在通信负载时复测并由 OEM 核对预期拓扑。')
         paths = [out / f'nvlink-errors-{phase}.txt' for phase in ('before', 'after')]
-        if any(path.exists() for path in paths) or strict:
+        if require_nvlink or has_links or (not generic and any(path.exists() for path in paths)):
             old, new = [nvlink_counters(path) for path in paths]
             if not old or not new or set(old) != set(new):
                 review.append('NVLink 错误计数缺失、不可解析或前后字段不同，不能视为零错误。')
-            if strict and {key[0] for key in new} != set(after):
+            if require_nvlink and {key[0] for key in new} != set(after):
                 review.append('NVLink 错误计数未覆盖全部物理 GPU。')
             for key in old.keys() & new.keys():
                 gpu, link, label = key
