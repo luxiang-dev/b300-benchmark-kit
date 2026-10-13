@@ -16,6 +16,7 @@ CODE = ["Dockerfile", ".dockerignore", "requirements.txt", "models.json", "model
         "README.md", "docs/使用总览.md", "authenticity.py", "memory_probe.py", "run_authenticity.py", "dashboard.py", "evidence.py",
         "dashboard/index.html", "dashboard/app.js", "dashboard/style.css", "docs/可视化验真操作.md", "telemetry_guard.py", "server_probe.py",
         "network_access.py", "docs/公网映射访问.md", "hardware_profiles.py", "docs/通用验货与可视化.md", "purchase_acceptance.py", "gpu_evidence.py", "dcgm_evidence.py", "job_lock.py", "hardware_health.py", "server_health.py", "inventory_summary.py", "docs/采购验货要求.md",
+        "offline_resources.py", "offline_manifest.py", "offline_smoke.py", "verify_offline.sh", "docs/离线资源总清单.md",
         "images/runtime.inspect.json", "images/b300-test.tar"]
 
 

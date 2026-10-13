@@ -38,6 +38,7 @@ class Element {
 const elements = ids.map((id) => Object.assign(new Element(), {id}));
 const byId = Object.fromEntries(elements.map((element) => [element.id, element]));
 byId.hardwareProfile.value="auto";byId.expectedGpus.value="0";byId.memoryFraction.value="0.85";byId.maxTemp.value="85";
+byId.offlineScope.value="all";
 byId.connectionStatus.append(new Element("span"), new Element("span"));
 const document = {
   getElementById: (id) => byId[id],
@@ -123,6 +124,17 @@ async function main() {
   assert.equal(evaluate("gate('deepseek').ok"), true, "Readiness uses the backend configured field");
   const cpuOnly={...base,readiness:{...base.readiness,gpus:[],tools:{python3:true,docker:false,nvidia_smi:false},image:{available:false}}};
   setState(cpuOnly);
+  assert.equal(evaluate("gate('offline-check').ok"),true,"Resource gaps remain inspectable without a GPU or Docker");
+  evaluate("selectedProfile='offline-check'; renderSelected()");
+  assert.equal(byId.offlineScopeControl.hidden,false);
+  assert.ok(byId.selectedRequirements.textContent.includes("无需 GPU"));
+  const offlineJob={id:'offline-fixture',profile:'offline-check',status:'INCOMPLETE',artifacts:[],summary:{profile:'offline-check',overall:'INCOMPLETE',resources:[{name:'<script>fixture()</script>',status:'PRESENT_UNVERIFIED'},{name:'image',status:'MISSING'}],models:[],incomplete:['missing cache']}};
+  setState({...cpuOnly,jobs:[offlineJob]});
+  assert.equal(byId.offlinePanel.hidden,false);
+  assert.ok(textOf(byId.offlineResourceList).includes('已存在，未校验'));
+  assert.ok(textOf(byId.offlineResourceList).includes('<script>fixture()</script>'));
+  assert.ok(byId.offlineVerdict.textContent.includes('未在此核对中执行'));
+  assert.ok(textOf(byId.offlineResourceGaps).includes('missing cache'));
   assert.equal(evaluate("gate('server').ok"),true,"CPU server workflow needs neither NVIDIA nor Docker");
   assert.equal(evaluate("gate('identity').ok"),false);
   const singleRTX={...base,readiness:{...base.readiness,gpus:[{name:"NVIDIA GeForce RTX 4090",uuid:"synthetic-only",mig:"N/A",ecc:"N/A",memory_mib:24576}]}};
@@ -185,6 +197,11 @@ async function main() {
   const stop = mock.requests.find((request) => request.url.endsWith("/stop"));
   assert.ok(stop);
   assert.equal(stop.options.headers["X-CSRF-Token"], "synthetic-test-token");
+  setState(cpuOnly);mock.requests=[];byId.offlineScope.value='server';
+  await evaluate("selectedProfile='offline-check'; startJob()");
+  const offlinePost=mock.requests.find((request) => request.url==='/api/jobs');
+  assert.equal(JSON.parse(offlinePost.options.body).offline_scope,'server');
+  assert.equal(byId.offlineScope.disabled,true,'Scope is frozen during a running audit');
   const mutations = mock.requests.filter((request) => request.options.method === "POST").length;
   evaluate("state.demo=true");
   await evaluate("startJob()");

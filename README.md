@@ -12,6 +12,7 @@
 
 - [通用验货与全流程可视化：准备、本地/Windows操作、参数、结果](docs/通用验货与可视化.md)
 - [局域网/公网映射：监听地址、代理与可选口令](docs/公网映射访问.md)
+- [通用离线资源总清单：基础包、DeepSeek、主机依赖及断网验练](docs/离线资源总清单.md)
 - [原 B300 专项：Ubuntu 准备、运行、结果与排错](docs/使用总览.md)
 - [原 8×B300 可视化验真说明](docs/可视化验真操作.md)
 - [采购验货门禁、当前遗漏与厂商材料清单](docs/采购验货要求.md)
@@ -75,3 +76,5 @@ node tests/frontend_smoke.js
 ```
 
 仓库提供源码、固定版本下载清单和准备脚本。模型权重、Docker 镜像、运行结果和本机准备状态不提交到 Git。
+
+离线准备在页面选择“离线资源核对”，可选无 GPU、硬件、基础模型或基础加 DeepSeek 四档。核对显示具体缺项和哈希状态，不下载、不安装；仅文件存在不会宣布离线就绪。CLI 对应 `python3 offline_resources.py --scope all --verify-hashes --out /data/results/offline-inventory`。准备完成后在目标 Ubuntu 执行 `bash verify_offline.sh full`（全部资源用 `all`），再运行真实硬件/模型流程。外部 DeepSeek、数据/缓存及主机安装材料可用 `offline_manifest.py` 制作、验证完整性清单。详见 [离线总清单](docs/离线资源总清单.md)。

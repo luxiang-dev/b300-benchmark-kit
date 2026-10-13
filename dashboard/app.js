@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const dom = {};
 document.querySelectorAll("[id]").forEach((node) => { dom[node.id] = node; });
 const profileInfo = {
+  'offline-check': {title:"离线资源核对",subtitle:"主机 · 镜像 · 权重 · 缓存",category:"OFFLINE PREPARATION",icon:"▣",action:"核对离线资源",requires_gpus:0,scope:["源码与本地可视化资源", "主机工具、镜像归档和封装哈希", "Qwen / SDXL 固定版本与逐文件哈希", "DeepSeek 专项源码、模型、数据、环境和缓存"],description:"只读取和核对本地资源，不下载、不安装、不运行 GPU 负载。资源缺失时仍可执行核对，查看具体缺项。",boundary:"文件存在或哈希通过不代表目标机器已通过断网运行。完整离线验练需在目标 Ubuntu 上执行 verify_offline.sh，并运行实际测试。"},
   server: {title:"整机检查（无需 GPU）", subtitle:"CPU · RAM · 存储 · NIC · BMC", category:"SERVER CHECK", icon:"▤", action:"开始整机检查", requires_gpus:0, scope:["CPU / DIMM / SSD / NIC 实测清单", "CPU、256 MiB RAM 与128 MiB结果盘抽查", "压力前后 SMART / BMC 健康复核", "内核 RAS 错误与原始证据导出"], description:"适用于无 GPU 服务器，也可对有 GPU 的机器单独检查主机部件。无需 Docker 或 NVIDIA 驱动。", boundary:"不自动覆盖全部 RAM、全部磁盘写读和 NIC 远端线速；仍需补齐采购 BOM、OEM诊断与人工验收。"},
   identity: {title:"身份交叉检查", subtitle:"硬件身份 · 架构与驱动", category:"IDENTITY CHECK", icon:"◈", action:"开始身份检查", requires_gpus:0, requires_docker:false, requires_image:false, scope:["型号、UUID、PCI 与 VBIOS","满足条件时检查 CUDA 能力","显存与硬件身份一致性","逐卡异常与缺失证据"], description:"先采集主机身份，识别型号、架构和容量之间的不一致。仅在实际卡数与本地镜像可用时补充 CUDA 检查；缺失项目保留为未完成或需复核。", boundary:"结论是软件证据的一致性评估。驱动提供的名称、UUID 或序列号本身不能代替厂商认证；还应核对实物、采购记录与供应商信息。"},
   authenticity: {title:"真实性负载", subtitle:"服务器抽查 · 显存 · 计算 · 互联", category:"HARDWARE VALIDATION", icon:"⌘", action:"开始真实性负载", requires_gpus:1, minimum_gpus:true, requires_docker:true, requires_image:true, scope:["逐卡身份与 CUDA 能力检查","服务器清单与 CPU / RAM / 结果盘抽查","显存容量与数据正确性压力","实际计算与 NCCL 互联负载","ECC、Xid、温度与原始日志"], description:"对当前 NVIDIA GPU 服务器运行真实硬件负载，补充 CPU、RAM 与结果盘的小样本正确性检查，并采集存储、NIC、NUMA 与 BMC 清单。此项目无需大模型权重。", boundary:"服务器抽查默认只覆盖 256 MiB RAM 与 128 MiB 结果盘文件。全 RAM、全盘、NIC 远端线速和 OEM 人工验收仍需另行完成；本次通过仅适用于实际已执行的范围。"},
@@ -94,7 +95,7 @@ function renderConfiguration() {
     replace(dom.hardwareProfile,state.hardware_profiles.map((item) => { const option=node("option",null,item.title);option.value=item.id;return option; }));
     dom.hardwareProfile.value="auto";configuredOptions=true;
   }
-  [dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds].forEach((input) => {input.disabled=!!activeJob() || pendingMutation;});
+  [dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds,dom.offlineScope].forEach((input) => {input.disabled=!!activeJob() || pendingMutation;});
 }
 function readiness() { return state?.readiness || {}; }
 const acceptanceStatement = "测试通过不等于采购验收完成。请勿仅依据 PASS 或身份信号一致判定整机验收通过或支付尾款。";
@@ -141,11 +142,11 @@ function gate(id, ignoreBusy = false) {
   const tools = r.tools || {};
   const gpus = Array.isArray(r.gpus) ? r.gpus : [];
   if (!available(tools.python3)) return {ok:false, reason:"主机未检测到可用的 Python 3。"};
-  if (!["import-image","server"].includes(id) && !available(tools.nvidia_smi)) return {ok:false, reason:"主机未检测到可用的 nvidia-smi，请检查驱动。"};
+  if (!["import-image","server","offline-check"].includes(id) && !available(tools.nvidia_smi)) return {ok:false, reason:"主机未检测到可用的 nvidia-smi，请检查驱动。"};
   const required = numeric(info.requires_gpus);
   if (required !== null && required > 0 && (info.minimum_gpus ? gpus.length < required : gpus.length !== required)) return {ok:false, reason:`此项目需要 ${required} 张物理 GPU，当前识别到 ${gpus.length} 张。`};
   if (["compare","deepseek"].includes(id) && (gpus.length !== 8 || gpus.some((gpu) => !/\bB300\b/i.test(String(gpu.name || ""))))) return {ok:false, reason:"此参考/专项要求 8×B300；当前设备不能套用。"};
-  if (!["import-image","identity","server"].includes(id)) {
+  if (!["import-image","identity","server","offline-check"].includes(id)) {
     const target = settings();
     if (target.expected_gpus && target.expected_gpus !== gpus.length) return {ok:false, reason:"实际卡数与采购目标不符；请先运行身份核验。"};
     if (gpus.some((gpu) => !["Disabled","N/A","Not Supported"].includes(gpu.mig) || !["Enabled","N/A","Not Supported"].includes(gpu.ecc))) return {ok:false, reason:"需关闭 MIG，并确认支持的 ECC 已开启；状态未知需复核。"};
@@ -290,6 +291,8 @@ function renderSelected() {
   }));
   dom.profileBoundary.textContent = info.boundary;
   dom.durationControl.hidden = !["authenticity","burn"].includes(selectedProfile);
+  dom.offlineScopeControl.hidden=selectedProfile!=="offline-check";
+  if (selectedProfile==="offline-check") dom.selectedRequirements.textContent="本地资源核对 · 无需 GPU";
   const eligibility = gate(selectedProfile);
   dom.startButton.disabled = !eligibility.ok;
   dom.startButtonLabel.textContent = pendingMutation ? "正在提交…" : info.action;
@@ -487,6 +490,20 @@ function renderArtifacts(job) {
     return link;
   }));
 }
+function renderOffline(job) {
+  const value=job?.summary?.profile==="offline-check" ? job.summary : null;
+  dom.offlinePanel.hidden=!value;
+  if (!value) return;
+  dom.offlineVerdict.textContent="断网运行：未在此核对中执行；不能仅凭文件状态宣布离线可用。";
+  const rows=[...(value.resources || []),...(value.models || []),...(value.deepseek?.models || []),...(value.host_tools || []).map((item) => ({...item,name:`主机工具：${item.command} (${item.package})`}))];
+  const labels={HASH_VERIFIED:"哈希已核对",PRESENT_UNVERIFIED:"已存在，未校验",MISSING:"缺失",INVALID:"校验失败",FOUND:"工具已找到"};
+  replace(dom.offlineResourceList,rows.map((item) => {
+    const row=node("div","readiness-row");const label=node("div");label.append(node("strong",null,item.name),node("div","readiness-row-detail",item.expected_bytes ? `清单要求 ${displayNumber(item.expected_bytes/2**30,2)} GiB；${item.expected_files} 个文件` : item.bytes ? `${displayNumber(item.bytes/2**30,2)} GiB` : item.path || ""));
+    row.append(label,node("span","small-tag",labels[item.status] || item.status));return row;
+  }));
+  const notes=[...(value.failures || []),...(value.incomplete || []),...(value.host_manual_resources || [])];
+  replace(dom.offlineResourceGaps,notes.map((note) => node("li",null,note)));
+}
 function renderInventory(job) {
   const inv=job?.summary?.observed_inventory;
   dom.inventoryPanel.hidden=!inv;
@@ -504,6 +521,7 @@ function renderInventory(job) {
   replace(dom.coverageNotes,notes.map((note) => node("li",null,note)));
 }
 function renderJobDetail() {
+  renderOffline(jobs().find((item) => item.id === selectedJobId));
   renderInventory(jobs().find((item) => item.id === selectedJobId));
   const job = jobs().find((item) => item.id === selectedJobId) || (activeJob()?.id === selectedJobId ? activeJob() : null);
   dom.stopButton.hidden = !job || rawStatus(job.status) !== "RUNNING" || String(job.status).toUpperCase() === "EXPORTING";
@@ -571,6 +589,7 @@ async function startJob(requestedProfile = selectedProfile) {
   try {
     if (!csrfToken) await session();
     const payload = {profile:requestedProfile, ...settings()};
+    if (requestedProfile==="offline-check") payload.offline_scope=dom.offlineScope.value || "all";
     if (["authenticity","burn"].includes(requestedProfile)) payload.seconds = Number(dom.burnSeconds.value);
     const result = await api("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken},body:JSON.stringify(payload)});
     if (!result.id) throw new Error("主机未返回任务编号，请刷新后检查运行记录。");
@@ -621,6 +640,6 @@ if ("IntersectionObserver" in window) {
   ["overview","workflow","evidence","guide"].forEach((id) => observer.observe(dom[id]));
 }
 document.addEventListener("visibilitychange",() => { if (!document.hidden) refresh(); });
-[dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds].forEach((input) => input.addEventListener("change",() => {renderSelected();}));
+[dom.hardwareProfile,dom.expectedGpus,dom.memoryFraction,dom.maxTemp,dom.burnSeconds,dom.offlineScope].forEach((input) => input.addEventListener("change",() => {renderSelected();}));
 render();
 session().catch((error) => { showAction(`操作会话尚未就绪：${error.message}`,true); }).finally(() => refresh());

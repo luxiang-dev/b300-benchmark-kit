@@ -33,6 +33,7 @@ jobs:
           bash -n run.sh
           bash -n run_deepseek_mlperf.sh
           bash -n prepare_offline.sh
+          bash -n verify_offline.sh
           python tools/check_text_files.py
       - name: CPU regressions and Linux launcher integration (mock hardware)
         run: python -m unittest discover -s tests -v
@@ -53,4 +54,7 @@ jobs:
           python server_health.py --help
           python inventory_summary.py --help
           python bundle.py status
+          python offline_resources.py --help
+          python offline_manifest.py --help
+          python offline_smoke.py --help
           python download_models.py --plan

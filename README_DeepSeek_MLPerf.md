@@ -128,3 +128,9 @@ bash /data/b300-usb-kit/run.sh deepseek /data/b300-results/deepseek-001
 准确率必须覆盖 4388 个唯一整数 QSL 索引，响应为合法词表范围的小端 int32 token，原始平均 token 长度与 accuracy.txt 一致，并通过官方准确率执行流程；性能和准确率 detail 都必须记录 v6.0 LoadGen 且无错误事件。适配器另外复核 `exact_match >= 81.3582 × 0.99 = 80.544618`，平均输出长度位于 `3886.2274 × [0.9, 1.1]`。[v6.0 官方判定常量](https://github.com/mlcommons/inference/blob/175ea7ba24a826946458f72ec4a2221215f52802/tools/submission/submission_checker/constants.py)。日志缺失/损坏/缩短运行/不同模型或精度均不会计算百分比。
 
 报告显示整机 Tokens/s、公测 70325.7、本次/公测及差距，不把单卡值乘 8。公测性能偏差不自动判为硬件故障；软件、CPU、功耗、拓扑和权重版本差异需结合报告核对。未运行时保留 `REFERENCE_ONLY`，不会用 Qwen 吞吐代替本项目。
+
+## 离线资源补充入口
+
+基础包和本专项全部离线依赖、运输与空间规划见 [通用离线资源总清单](docs/离线资源总清单.md)。`offline_resources.py --scope all --verify-hashes --out /data/results/offline-inventory` 可核对现有资源，不下载。外部源码/scratch/镜像使用 `offline_manifest.py` 封装并在目标机验证；基础 `bundle.py` 不覆盖这些外部资源。
+
+准备完成并设置 `MLPERF_REPO`、`MLPERF_SCRATCH_PATH`、`MLPERF_IMAGE` 后，目标 Ubuntu 执行 `bash verify_offline.sh deepseek` 做无外网容器中的专项 check；随后仍需实际执行性能及准确率测试。可额外设置 `MLPERF_IMAGE_ARCHIVE`（最终本地 tar）与 `MLPERF_IMAGE_INSPECT`（最终 inspect JSON），供核对/本地导入使用；启动可视化控制服务前设置这些变量。

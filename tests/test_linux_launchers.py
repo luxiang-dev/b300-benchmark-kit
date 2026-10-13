@@ -91,6 +91,34 @@ class LinuxLauncherTests(unittest.TestCase):
         self.assertEqual(json.loads((self.out / 'summary.json').read_text())['overall'], 'INCOMPLETE')
         self.assertTrue((self.out / 'report.html').is_file())
 
+    def test_offline_preflight_disables_network_and_propagates_runtime_failure(self):
+        proc=subprocess.run(['bash',str(self.source/'verify_offline.sh'),'full'],env=self.env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(proc.returncode,42,proc.stdout+proc.stderr)
+        self.assertNotIn('DISCONNECTED PREFLIGHT PASSED',proc.stdout)
+        calls=[json.loads(line) for line in self.record.read_text().splitlines()]
+        run=next(call for call in calls if call[0]=='run')
+        self.assertEqual(run[run.index('--network')+1],'none')
+        self.assertEqual(run[run.index('--pull')+1],'never')
+        self.assertIn('--models',run)
+        self.assertIn('HF_HUB_OFFLINE=1',run)
+        self.assertTrue(any(call[0]=='stop' for call in calls))
+        descriptor=job_lock.acquire()
+        os.close(descriptor)
+
+    def test_deepseek_offline_preflight_keeps_scratch_and_never_pulls(self):
+        repo,scratch=self.root/'repo',self.root/'scratch'
+        (repo/'closed/NVIDIA').mkdir(parents=True)
+        scratch.mkdir()
+        self.env.update(MLPERF_REPO=str(repo),MLPERF_SCRATCH_PATH=str(scratch),MLPERF_IMAGE='synthetic:test')
+        proc=subprocess.run(['bash',str(self.source/'verify_offline.sh'),'deepseek'],env=self.env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(proc.returncode,42,proc.stdout+proc.stderr)
+        calls=[json.loads(line) for line in self.record.read_text().splitlines()]
+        run=next(call for call in calls if call[0]=='run')
+        self.assertEqual(run[run.index('--network')+1],'none')
+        self.assertEqual(run[run.index('--pull')+1],'never')
+        self.assertIn(str(scratch)+':'+str(scratch),run)
+        self.assertEqual(run[-3:],['check','--workspace','/submission/closed/NVIDIA'])
+
     def test_docker_stage_failure_propagates_and_still_generates_report(self):
         proc = self.run_mode('quick')
         self.assertEqual(proc.returncode, 42, proc.stdout+proc.stderr)

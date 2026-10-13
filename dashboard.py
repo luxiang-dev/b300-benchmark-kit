@@ -29,6 +29,7 @@ from network_access import AccessPolicy, load_token
 
 ROOT = Path(__file__).resolve().parent
 PROFILES = [
+    dict(id='offline-check', title='离线资源核对', description='核对源码、主机工具、镜像封装、模型哈希和 DeepSeek 外部依赖；不联网、不安装、不运行 GPU 负载。', requires_gpus=0),
     dict(id="server", title="整机检查（无需 GPU）", description="采集 CPU、DIMM、存储、NIC、BMC；抽查 CPU/RAM/结果盘并复核 SMART 与内核 RAS。", requires_gpus=0),
     dict(id='import-image', title='导入离线镜像', description='验证封装哈希后导入本地镜像，不联网拉取。', requires_docker=True),
     dict(id='identity', title='身份交叉核验', description='先采集PCI/序列号；条件满足再核对CUDA身份与实际计算。', requires_gpus=0),
@@ -185,6 +186,10 @@ class JobManager:
 
     def command(self, profile, out, seconds):
         job = self.jobs.get(self.active, {})
+        if profile == 'offline-check':
+            command=[sys.executable,str(ROOT/'offline_resources.py'),'--out',str(out),'--scope',job.get('offline_scope','all')]
+            if job.get('verify_hashes',True): command.append('--verify-hashes')
+            return command
         if profile in ("identity", "authenticity", "server"):
             return [sys.executable, str(ROOT / 'run_authenticity.py'), '--profile', profile, '--out', str(out),
                     '--image', self.image, "--gpus", str(job.get("gpus", len(self.ready().get("gpus", [])) or 1)), "--hardware-profile", job.get("hardware_profile", "auto"), "--memory-fraction", str(job.get("memory_fraction", .85)), '--seconds', str(seconds if profile == 'authenticity' else 600),
@@ -201,6 +206,10 @@ class JobManager:
         if not isinstance(body, dict) or body.get('profile') not in PROFILE_MAP:
             raise ValueError('Unknown profile')
         profile = body['profile']
+        offline_scope=body.get('offline_scope','all')
+        verify_hashes=body.get('verify_hashes',True)
+        if offline_scope not in ('server','hardware','full','all') or type(verify_hashes) is not bool:
+            raise ValueError('Invalid offline audit scope or hash option')
         seconds = body.get('seconds', 3600 if profile == 'burn' else 600)
         if type(seconds) is not int or not 1 <= seconds <= 86400:
             raise ValueError('seconds must be an integer from 1 to 86400')
@@ -221,12 +230,12 @@ class JobManager:
                 raise RuntimeError('A job is already active')
             ready = self.ready(True)
             count = len(ready.get("gpus", []))
-            if profile not in ("server", "identity", "import-image") and ((expected_gpus and count != expected_gpus) or any(not hp.matches(hardware_profile, gpu.get("name", "")) for gpu in ready.get("gpus", []))):
+            if profile not in ("server", "identity", "import-image", "offline-check") and ((expected_gpus and count != expected_gpus) or any(not hp.matches(hardware_profile, gpu.get("name", "")) for gpu in ready.get("gpus", []))):
                 raise ValueError("当前 GPU 型号或数量与指定采购目标不符；先执行身份核验")
             eligibility = profile_eligibility(PROFILE_MAP[profile], ready, self.preview)
             if not eligibility['available']:
                 raise ValueError(eligibility['unavailable_reason'])
-            if profile != 'import-image':
+            if profile not in ('import-image','offline-check'):
                 self.gpu_lock = job_lock.acquire()
             job_id = time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
             out = self.root / job_id
@@ -234,8 +243,9 @@ class JobManager:
                 out.mkdir()
                 job = dict(id=job_id, profile=profile, status='RUNNING', exit_code=None, started_at=utc_now(),
                            ended_at=None, seconds=seconds, cancelled=False, thermal_stop=False,
-                           gpus=0 if profile == "server" else expected_gpus or count or 1, expected_gpus=expected_gpus, hardware_profile=hardware_profile, memory_fraction=memory_fraction, max_temp=max_temp,
-                           expected_gpu_uuids=[] if profile == "server" else [gpu['uuid'] for gpu in ready.get('gpus', [])])
+                           gpus=0 if profile in ('server','offline-check') else expected_gpus or count or 1, expected_gpus=expected_gpus, hardware_profile=hardware_profile, memory_fraction=memory_fraction, max_temp=max_temp,
+                           offline_scope=offline_scope,verify_hashes=verify_hashes,
+                           expected_gpu_uuids=[] if profile in ('server','offline-check') else [gpu['uuid'] for gpu in ready.get('gpus', [])])
                 self.jobs[job_id] = job
                 write_json(out / 'job.json', job)
                 self.active = job_id
@@ -251,7 +261,7 @@ class JobManager:
             return job_id
 
     def _cleanup_containers(self, job_id):
-        if self.jobs.get(job_id, {}).get('profile') == 'server':
+        if self.jobs.get(job_id, {}).get('profile') in ('server','offline-check'):
             return
         if not shutil.which('docker'):
             return
@@ -379,7 +389,7 @@ class JobManager:
                                                    stderr=subprocess.STDOUT, start_new_session=True,
                                                    pass_fds=(self.gpu_lock,) if self.gpu_lock is not None else ())
                         self.process = process
-                    if job['profile'] not in ('import-image', 'identity', 'server') and watcher is None:
+                    if job['profile'] not in ('import-image', 'identity', 'server','offline-check') and watcher is None:
                         watcher = threading.Thread(target=self._watch, args=(job_id, done), daemon=True)
                         watcher.start()
                     rc = process.wait()
@@ -388,7 +398,7 @@ class JobManager:
             done.set()
             if watcher:
                 watcher.join(timeout=12)
-            if job["profile"] != "server":
+            if job["profile"] not in ('server','offline-check'):
                 self._cleanup_containers(job_id)
             cleanup_completed = True
             summary = optional_json(out / 'summary.json')
