@@ -2,6 +2,16 @@
 
 本次已修复首次审查中的主要问题，并加入 Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 的持续验证。当前完整使用入口为 [通用验货与全流程可视化](通用验货与可视化.md)。
 
+## 最新通用离线资源版本 · 2026-10-13
+
+受测源码 `ec1eeaa46a801fac69f761334b926189294a5cdd`：[Ubuntu CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38334657299)。两个原始 job 日志已核对：Ubuntu 22.04 / Python 3.10 为 **307 tests / OK / 无跳过（55.524 秒）**，Ubuntu 24.04 / Python 3.12 为 **307 tests / OK / 无跳过（50.995 秒）**。Windows 全量 **307 tests / OK / 跳过 19 项**（Linux 进程、flock、链接/权限与特殊文件相关），33 个 Linux 入口 UTF-8/LF、Bash、前端、CLI 检查通过。
+
+新增“离线资源核对”页面和 server/hardware/full/all 四档，资源不完整、无 GPU/Docker 时也能执行核对；输出当前文件/哈希状态、缺项、独立 HTML/JSON 和证据。通用 `offline_manifest.py` 覆盖任意准备目录的文件、隐藏 Git、空目录、链接与 Linux 权限。`verify_offline.sh` 提供基础及 DeepSeek 本地镜像断网预检；模拟容器退出 42 时保持失败，测试验证 `--network none`、`--pull never`、HF offline 环境变量及 scratch 挂载。
+
+故障注入覆盖同大小文件篡改、文件/目录增删、路径逃逸、坏清单、缺模型、坏封装、旧准备快照及未校验文件不能变为就绪。浏览器实查 1440×1000 与 390×844：9 个项目、4 档离线范围、可选择 CPU 范围、只读预览、无页面异常及水平溢出。
+
+本地 43 个基础模型文件再次通过锁文件来源哈希，总计 24,857,877,682 字节；实际资源核对结果 **INCOMPLETE / offline_ready=false / runtime_validation=NOT_RUN**。按用户要求未下载新资源；镜像/封装、DeepSeek 独立环境和目标 Ubuntu/GPU 尚未准备或实测。CI 及目录校验不证明目标机器能运行全部模型，不证明服务器为正品或完成采购验收。完整准备表见 [离线资源总清单](离线资源总清单.md)。
+
 ## 最新局域网与公网映射版本
 
 受测源码 `9a383c4b5a66e124edaf3fa7b639e865f18b9ff1`：[最终 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38233634415)。已核对两个原始日志：Ubuntu 24.04 / Python 3.12 为 **287 tests / OK / 无跳过（45.046 秒）**，Ubuntu 22.04 / Python 3.10 为 **287 tests / OK / 无跳过（46.460 秒）**。Windows 全量 **287 tests / OK / 跳过 15 项**，前端和 29 个 Linux 入口的编码检查通过。

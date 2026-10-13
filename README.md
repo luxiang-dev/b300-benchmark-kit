@@ -4,7 +4,7 @@
 
 **主要用于采购验货辅助，技术 PASS 不等于整机验收完成。** 新报告独立显示采购状态与待补证项目；配置清单、厂商来源/保修和完整整机诊断缺失时不自动收货通过。买方暂不清楚配置时，先导出实测清单再让卖方核对，见 [采购验货要求与卖方材料清单](docs/采购验货要求.md)。
 
-通用改造与公网映射支持均有回归测试。**Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 各通过 287 项测试，无跳过**，Bash/编码/前端/CLI 检查通过；见 [本次 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38233634415)。**不同 GPU 和运行时仍需实机验证**；CPU/模拟启动测试不代表真实 GPU 验货通过，验证范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
+通用验货、公网映射及离线资源工具均有回归测试。**Ubuntu 22.04 / Python 3.10、Ubuntu 24.04 / Python 3.12 各通过 307 项测试，无跳过**，Bash/编码/前端/CLI 检查通过；见 [本次 CI](https://github.com/luxiang-dev/b300-benchmark-kit/actions/runs/38334657299)。**不同 GPU 和运行时仍需实机验证**；CPU/模拟启动测试不代表真实 GPU 验货或目标机断网运行通过，验证范围见 [Ubuntu 复查记录](docs/UBUNTU_REVIEW.md)。
 
 包含 PCI/CUDA/UUID/序列号交叉核验、每卡默认约 85% 显存地址模式写读、适用的 ECC/拓扑、按架构使用 BF16/FP32 的压力、多卡 NCCL、服务器功能抽查、可选 Qwen/SDXL，以及 HTML/JSON/原始证据 ZIP。已知架构规则与通用一致性检查分开；未知型号保留 REVIEW。消费级卡没有 ECC/NVLink 不直接判假，也不能记录为已测通过。
 
@@ -71,7 +71,7 @@ python3 -m venv .venv-test
 . .venv-test/bin/activate
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests
-for script in run.sh run_deepseek_mlperf.sh prepare_offline.sh; do bash -n "$script"; done
+for script in run.sh run_deepseek_mlperf.sh prepare_offline.sh verify_offline.sh; do bash -n "$script"; done
 node tests/frontend_smoke.js
 ```
 
